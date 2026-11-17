@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 
 type Screen = 'client' | 'admin'
@@ -29,11 +29,8 @@ function App() {
     setClientError(null)
 
     try {
-      const response = await fetch(`${API_URL}/api/customers`, {
+      const response = await apiFetch('/api/customers', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           name: clientName,
           phone: clientPhone,
@@ -61,12 +58,8 @@ function App() {
     setAdminError(null)
 
     try {
-      const response = await fetch(`${API_URL}/api/admin/login`, {
+      const response = await apiFetch('/api/admin/login', {
         method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           email: adminEmail,
           password: adminPassword,
@@ -87,6 +80,42 @@ function App() {
       setAdminError(error instanceof Error ? error.message : 'Erro inesperado.')
     }
   }
+
+  function getXsrfToken() {
+    const cookie = document.cookie
+      .split('; ')
+      .find((item) => item.startsWith('XSRF-TOKEN='))
+
+    return cookie ? cookie.slice('XSRF-TOKEN='.length) : undefined
+  }
+
+  async function primeCsrf() {
+    await fetch(`${API_URL}/api/csrf`, {
+      credentials: 'include',
+    })
+  }
+
+  async function apiFetch(path: string, init: RequestInit = {}) {
+    let xsrfToken = getXsrfToken()
+
+    if (!xsrfToken) {
+      await primeCsrf()
+      xsrfToken = getXsrfToken()
+    }
+
+    return fetch(`${API_URL}${path}`, {
+      ...init,
+      credentials: 'include',
+      headers: {
+        ...(init.headers || {}),
+        ...(xsrfToken ? { 'X-XSRF-TOKEN': xsrfToken } : {}),
+      },
+    })
+  }
+
+  useEffect(() => {
+    primeCsrf().catch(() => undefined)
+  }, [])
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-10 text-slate-900">
