@@ -3,6 +3,8 @@ import { Button } from '@/components/ui/button'
 
 type Screen = 'client' | 'admin'
 
+const API_URL = import.meta.env.VITE_API_URL?.replace(/\/$/, '') ?? ''
+
 type ApiErrorPayload = {
   message?: string
   errors?: Record<string, string[]>
@@ -27,7 +29,7 @@ function App() {
     setClientError(null)
 
     try {
-      const response = await fetch('http://localhost:3333/api/customers', {
+      const response = await fetch(`${API_URL}/api/customers`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -59,7 +61,7 @@ function App() {
     setAdminError(null)
 
     try {
-      const response = await fetch('http://localhost:3333/api/admin/login', {
+      const response = await fetch(`${API_URL}/api/admin/login`, {
         method: 'POST',
         credentials: 'include',
         headers: {
