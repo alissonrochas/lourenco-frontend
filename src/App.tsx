@@ -6,8 +6,41 @@ type Screen = 'client' | 'admin'
 const API_URL = import.meta.env.VITE_API_URL?.replace(/\/$/, '') ?? ''
 
 type ApiErrorPayload = {
+  code?: string
   message?: string
   errors?: Record<string, string[]>
+}
+
+async function readApiPayload(response: Response) {
+  try {
+    return (await response.json()) as ApiErrorPayload
+  } catch {
+    return {}
+  }
+}
+
+function getApiErrorMessage(response: Response, payload: ApiErrorPayload, fallback: string) {
+  if (response.status === 429) {
+    const retryAfter = response.headers.get('Retry-After')
+    return retryAfter
+      ? `Muitas tentativas. Tente novamente em ${retryAfter} segundos.`
+      : 'Muitas tentativas. Aguarde antes de tentar novamente.'
+  }
+
+  if (response.status === 403 && payload.code === 'E_BAD_CSRF_TOKEN') {
+    return 'Sessão CSRF expirada. Atualize a página e tente novamente.'
+  }
+
+  if (response.status === 419) {
+    return 'Sessão CSRF expirada. Atualize a página e tente novamente.'
+  }
+
+  if (response.status === 401) {
+    return payload.message || 'Credenciais inválidas ou sessão expirada.'
+  }
+
+  const firstError = payload.errors ? Object.values(payload.errors)[0]?.[0] : payload.message
+  return firstError || fallback
 }
 
 function App() {
@@ -22,6 +55,7 @@ function App() {
   const [adminPassword, setAdminPassword] = useState('')
   const [adminStatus, setAdminStatus] = useState<string | null>(null)
   const [adminError, setAdminError] = useState<string | null>(null)
+  const [adminAuthenticated, setAdminAuthenticated] = useState(false)
 
   const handleClientSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -37,11 +71,10 @@ function App() {
         }),
       })
 
-      const payload = (await response.json()) as ApiErrorPayload & { name?: string; phone?: string }
+      const payload = (await readApiPayload(response)) as ApiErrorPayload & { name?: string; phone?: string }
 
       if (!response.ok) {
-        const firstError = payload.errors ? Object.values(payload.errors)[0]?.[0] : payload.message
-        throw new Error(firstError || 'Não foi possível cadastrar o cliente.')
+        throw new Error(getApiErrorMessage(response, payload, 'Não foi possível cadastrar o cliente.'))
       }
 
       setClientStatus(`Cliente cadastrado com sucesso: ${payload.name}`)
@@ -66,16 +99,36 @@ function App() {
         }),
       })
 
-      const payload = (await response.json()) as ApiErrorPayload & { user?: { fullName?: string } }
+      const payload = (await readApiPayload(response)) as ApiErrorPayload & { user?: { fullName?: string } }
 
       if (!response.ok) {
-        const firstError = payload.errors ? Object.values(payload.errors)[0]?.[0] : payload.message
-        throw new Error(firstError || 'Credenciais inválidas.')
+        const errorMessage = getApiErrorMessage(response, payload, 'Credenciais inválidas.')
+        throw new Error(errorMessage)
       }
 
       setAdminStatus(`Login realizado com sucesso${payload.user?.fullName ? ` para ${payload.user.fullName}` : ''}.`)
       setAdminEmail('')
       setAdminPassword('')
+      setAdminAuthenticated(true)
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Erro inesperado.')
+    }
+  }
+
+  const handleAdminLogout = async () => {
+    setAdminStatus(null)
+    setAdminError(null)
+
+    try {
+      const response = await apiFetch('/api/admin/logout', { method: 'POST' })
+
+      if (!response.ok) {
+        const payload = await readApiPayload(response)
+        throw new Error(getApiErrorMessage(response, payload, 'Não foi possível sair da gestão.'))
+      }
+
+      setAdminAuthenticated(false)
+      setAdminStatus('Sessão encerrada com sucesso.')
     } catch (error) {
       setAdminError(error instanceof Error ? error.message : 'Erro inesperado.')
     }
@@ -86,7 +139,7 @@ function App() {
       .split('; ')
       .find((item) => item.startsWith('XSRF-TOKEN='))
 
-    return cookie ? cookie.slice('XSRF-TOKEN='.length) : undefined
+    return cookie ? decodeURIComponent(cookie.slice('XSRF-TOKEN='.length)) : undefined
   }
 
   async function primeCsrf() {
@@ -114,7 +167,10 @@ function App() {
   }
 
   useEffect(() => {
-    primeCsrf().catch(() => undefined)
+    primeCsrf()
+      .then(() => apiFetch('/api/admin/me'))
+      .then((response) => setAdminAuthenticated(response.ok))
+      .catch(() => setAdminAuthenticated(false))
   }, [])
 
   return (
@@ -222,6 +278,12 @@ function App() {
                 {adminStatus && <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{adminStatus}</p>}
                 {adminError && <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{adminError}</p>}
               </form>
+            )}
+
+            {adminAuthenticated && (
+              <Button type="button" variant="secondary" className="w-full" onClick={handleAdminLogout}>
+                Sair da gestão
+              </Button>
             )}
           </section>
         </div>
