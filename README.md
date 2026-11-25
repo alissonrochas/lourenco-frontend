@@ -55,7 +55,7 @@ Recarregar `/admin` consulta novamente `/api/admin/me` e mantém uma sessão vá
 
 ## API e comportamento de segurança
 
-`src/lib/api.ts` preserva `credentials: 'include'`, decodifica o cookie `XSRF-TOKEN`, prepara CSRF quando necessário e envia `X-XSRF-TOKEN`. Chamadas simultâneas compartilham apenas a preparação em andamento; os tokens são sempre relidos do cookie, inclusive depois de login/logout. Requisições POST enviam `Content-Type: application/json` quando têm corpo JSON.
+`src/lib/api.ts` preserva `credentials: 'include'` em todas as chamadas. Apenas POST, PUT, PATCH e DELETE leem o cookie `XSRF-TOKEN`, preparam CSRF quando necessário e enviam `X-XSRF-TOKEN`. Escritas simultâneas compartilham apenas a preparação em andamento; os tokens são sempre relidos do cookie, inclusive depois de login/logout. Se o token continuar ausente após a preparação, a escrita não é enviada. GET (incluindo `/api/admin/me`), HEAD e OPTIONS não dependem de cookie XSRF, não chamam `/api/csrf` e não enviam o header do token; a autenticação por sessão continua sendo validada pelo backend. Requisições POST enviam `Content-Type: application/json` quando têm corpo JSON.
 
 O módulo trata 401, 403 (incluindo `E_BAD_CSRF_TOKEN`), 419 e 429 com `Retry-After`, validações e respostas não JSON. Não repete automaticamente um POST depois de falha de CSRF, evitando duplicar operações.
 

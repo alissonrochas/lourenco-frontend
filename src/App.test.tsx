@@ -74,6 +74,7 @@ it('preserves public input and displays Retry-After when rate limited', async ()
 })
 
 it('restores a valid server session on direct /admin access and on remount without logging out', async () => {
+  document.cookie = 'XSRF-TOKEN=; Max-Age=0; path=/'
   const fetchMock = mockApi(() => json({ ok: true, user: admin }))
   const first = openPage('/admin')
   expect(screen.queryByRole('heading', { name: 'Login do administrador' })).toBeNull()
@@ -84,7 +85,8 @@ it('restores a valid server session on direct /admin access and on remount witho
   await screen.findByRole('heading', { name: 'Área administrativa' })
   expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2)
   expect(fetchMock.mock.calls.every(([url, init]) => url.endsWith('/api/admin/me') && init?.credentials === 'include')).toBe(true)
-  expect(document.cookie).toContain('XSRF-TOKEN=test-token')
+  expect(document.cookie).not.toContain('XSRF-TOKEN=')
+  expect(fetchMock.mock.calls.every(([, init]) => !new Headers(init?.headers).has('X-XSRF-TOKEN'))).toBe(true)
 })
 
 it.each([401, 403])('shows login for a denied session (%s)', async (status) => {

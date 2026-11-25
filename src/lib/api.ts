@@ -89,18 +89,24 @@ async function primeCsrf() {
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}) {
-  let token = xsrfToken()
-  if (!token) {
-    await primeCsrf()
-    token = xsrfToken()
-  }
-  if (!token) {
-    throw new Error('Não foi possível preparar a proteção CSRF. Atualize a página e tente novamente.')
+  const method = (init.method ?? 'GET').toUpperCase()
+  const headers = new Headers(init.headers)
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    let token = xsrfToken()
+    if (!token) {
+      await primeCsrf()
+      token = xsrfToken()
+    }
+    if (!token) {
+      throw new Error('Não foi possível preparar a proteção CSRF. Atualize a página e tente novamente.')
+    }
+    headers.set('X-XSRF-TOKEN', token)
+  } else {
+    // Session reads must not depend on a readable CSRF cookie or forward its token.
+    headers.delete('X-XSRF-TOKEN')
   }
 
-  const headers = new Headers(init.headers)
-  headers.set('X-XSRF-TOKEN', token)
-  return fetch(`${API_URL}${path}`, { ...init, headers, credentials: 'include' })
+  return fetch(`${API_URL}${path}`, { ...init, method, headers, credentials: 'include' })
 }
 
 async function requestJson<T>(path: string, fallback: string, init: RequestInit = {}): Promise<T> {
