@@ -71,13 +71,13 @@ function App() {
         }),
       })
 
-      const payload = (await readApiPayload(response)) as ApiErrorPayload & { name?: string; phone?: string }
+      const payload = await readApiPayload(response)
 
       if (!response.ok) {
         throw new Error(getApiErrorMessage(response, payload, 'Não foi possível cadastrar o cliente.'))
       }
 
-      setClientStatus(`Cliente cadastrado com sucesso: ${payload.name}`)
+      setClientStatus(payload.message || 'Solicitação recebida.')
       setClientName('')
       setClientPhone('')
     } catch (error) {
