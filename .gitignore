@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Playwright: temporary traces, screenshots, cookies and reports
+playwright-report/
+test-results/

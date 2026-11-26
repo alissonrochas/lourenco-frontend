@@ -5,6 +5,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   test: {
+    include: ['src/**/*.test.{ts,tsx}'],
     environment: 'jsdom',
     environmentOptions: { jsdom: { url: 'http://localhost:5173' } },
     setupFiles: ['./src/test/setup.ts'],

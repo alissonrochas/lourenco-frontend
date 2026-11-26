@@ -91,3 +91,9 @@ Nome e telefone ficam somente em memória; não são persistidos em storage pela
 Limitação atual: o CORS do backend não expõe Retry-After em outra origem. O frontend aguarda conservadoramente 60 segundos quando o header não é legível; para o contador exato, usar proxy de mesma origem ou tratar a exposição do header em PR separada do backend.
 
 A agenda administrativa monta apenas após a confirmação de sessão. Registros, contato e motivo ficam em memória; logout/negação de acesso remove esses dados da tela. Uma falha de rede no cancelamento exige consulta nova antes de outra tentativa, sem retry automático. Veja [docs/admin-booking-dashboard.md](docs/admin-booking-dashboard.md) para contratos, limites, privacidade e roteiro de validação.
+
+## Integração E2E real
+
+A suíte Playwright inicia cópias descartáveis do frontend e backend, com migrations reais e SQLite temporário. Requer dependências instaladas nos dois projetos e Chromium (`npx playwright install chromium`), ou Chrome instalado (`E2E_BROWSER_CHANNEL=chrome npm run test:e2e`). Execute `npm run test:e2e`; não precisa iniciar servidores nem usar seu `.env`. O backend é procurado em `../backend`, configurável por `E2E_BACKEND_PATH`.
+
+Consulte [docs/real-e2e-integration.md](docs/real-e2e-integration.md) para cenários, distinção entre navegador/HTTP/concorrência, isolamento, preservação, comandos e limitações. Relatórios e evidências em `playwright-report/` e `test-results/` não entram no Git. `npm run typecheck` verifica também a infraestrutura TypeScript de E2E.
