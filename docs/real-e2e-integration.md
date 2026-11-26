@@ -43,7 +43,7 @@ Os processos são encerrados e a pasta descartável é removida em `finally`, in
 
 ## Cobertura e evidência
 
-São 12 cenários, executados em desktop 1440×1000 e viewport mobile 390×844: 24 execuções. Ambos usam Chromium/Chrome com timezone `America/Sao_Paulo`; a execução mobile não é um teste de dispositivo físico ou Safari.
+São 16 cenários (12 originais e 4 de gestão de serviços), executados em desktop 1440×1000 e viewport mobile 390×844: 32 execuções. Ambos usam Chromium/Chrome com timezone `America/Sao_Paulo`; a execução mobile não é um teste de dispositivo físico ou Safari.
 
 | Cenário | Navegador real | Verificação adicional real |
 | --- | --- | --- |
@@ -79,7 +79,7 @@ HTTPS, cookies Secure=true, reverse proxy/TRUST_PROXY, origens finais, navegador
 
 Referências da infraestrutura: [fixtures Playwright](https://playwright.dev/docs/test-fixtures), [route.fetch](https://playwright.dev/docs/api/class-route#route-fetch) e [injeção de falhas de rede](https://playwright.dev/docs/network).
 
-## Resultados desta etapa — 26/11/2026
+## Resultados da Etapa 6 — 26/11/2026
 
 Base frontend `569eed9efd48a063cf3d8905a713cf57299c5de8`; backend `cbffde26b30777d16cfc782557229743267c11fc`. Node v24.19.0, Playwright 1.65.1 e Google Chrome 155.0.8059.79 em Linux. Nenhum endpoint de sucesso usa mock.
 
@@ -101,3 +101,8 @@ O typecheck completo do backend foi repetido em uma cópia de `git archive HEAD`
 A validação backend foi feita em cópia temporária, `NODE_ENV=test`, com o guard existente confirmando SQLite `:memory:` antes de migrations; cada teste que exige arquivo usa seu SQLite temporário já configurado. Nenhuma migration foi executada no banco original. As execuções E2E registraram `preserved: true`, com SHA-256 do banco de desenvolvimento inalterado: `cea95f27de3c157bff456a5aab8152c26b88de8ead86008c4edf2bea74ffdbe6`. `.env`, lockfile do backend e `types/better_sqlite3.d.ts` também permaneceram iguais à inspeção inicial.
 
 Durante a preparação, uma primeira execução completa identificou um erro no próprio teste de `Retry-After` (variável fora do escopo de `page.evaluate`): 22 passaram e 2 falharam. O argumento passou a ser enviado explicitamente ao contexto do navegador, sem mudar a aplicação ou enfraquecer a asserção. A execução completa seguinte passou. Foram acrescentadas asserções explícitas de origem CORS, credenciais, header CSRF e correspondência do painel com os dados SQL, novamente verificadas na suíte final.
+
+
+## Extensão da Etapa 7
+
+A suíte inclui S1–S4 para cadastro, edição, ativação/desativação, autorização/CSRF, resposta de criação perdida e preservação integral da reserva no SQLite. Mantém os fixtures e o isolamento anteriores, sem endpoints simulados ou mudanças no backend. Detalhes e resultados atuais estão em [admin-service-management.md](admin-service-management.md). A tabela de 24 execuções acima é o registro histórico da Etapa 6; a suíte atual contém 32 execuções.

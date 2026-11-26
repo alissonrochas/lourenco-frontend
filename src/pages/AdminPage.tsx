@@ -1,3 +1,4 @@
+import { ServicesDashboard } from '@/components/admin/ServicesDashboard'
 import { BookingDashboard } from '@/components/admin/BookingDashboard'
 import { useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
@@ -7,6 +8,8 @@ import { useAdminSession } from '@/hooks/useAdminSession'
 
 export function AdminPage() {
   const session = useAdminSession()
+  const [section, setSection] = useState<'agenda' | 'services'>('agenda')
+  const [servicesBusy, setServicesBusy] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
 
@@ -44,7 +47,13 @@ export function AdminPage() {
         <Button type="button" variant="secondary" className="w-full" onClick={session.logout} disabled={session.pending}>
           {session.pending ? 'Saindo…' : 'Sair da gestão'}
         </Button>
-        {!session.pending && <BookingDashboard onDenied={session.deny} />}
+        {!session.pending && <>
+          <nav className="admin-sections" aria-label="Seções administrativas">
+            <button type="button" aria-current={section === 'agenda' ? 'page' : undefined} disabled={servicesBusy} onClick={() => setSection('agenda')}>Agenda</button>
+            <button type="button" aria-current={section === 'services' ? 'page' : undefined} disabled={servicesBusy} onClick={() => setSection('services')}>Serviços</button>
+          </nav>
+          {section === 'agenda' ? <BookingDashboard onDenied={session.deny} /> : <ServicesDashboard onDenied={session.deny} onBusy={setServicesBusy} />}
+        </>}
       </div>
     )
   }

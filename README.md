@@ -62,7 +62,7 @@ O módulo trata 401, 403 (incluindo `E_BAD_CSRF_TOKEN`), 419 e 429 com `Retry-Af
 
 A verificação inicial tem estado de carregamento. Falha de rede, CSRF ou servidor permite tentar novamente, sem presumir que a sessão acabou. O logout bem-sucedido volta ao formulário de login. Se a API já negar a sessão com 401/403 de autorização, a tela também volta ao login; se o logout falhar por CSRF, limite ou erro de servidor, a tela não afirma que a sessão terminou.
 
-O fluxo público usa GET /api/services, GET /api/availability e POST /api/bookings. Não faz cadastro de cliente separado nem exige login. O layout usa azul-marinho/dourado e controles responsivos. A área administrativa mantém sua sessão e login/logout, com painel administrativo de reservas. Edição de serviços/calendário e cancelamento público continuam fora do escopo.
+O fluxo público usa GET /api/services, GET /api/availability e POST /api/bookings. Não faz cadastro de cliente separado nem exige login. O layout usa azul-marinho/dourado e controles responsivos. A área administrativa mantém sua sessão e login/logout, com painel administrativo de reservas. Configuração de calendário e cancelamento público continuam fora do escopo. A seção Serviços permite gerenciar o catálogo administrativo.
 
 ## Testar e validar
 
@@ -97,3 +97,10 @@ A agenda administrativa monta apenas após a confirmação de sessão. Registros
 A suíte Playwright inicia cópias descartáveis do frontend e backend, com migrations reais e SQLite temporário. Requer dependências instaladas nos dois projetos e Chromium (`npx playwright install chromium`), ou Chrome instalado (`E2E_BROWSER_CHANNEL=chrome npm run test:e2e`). Execute `npm run test:e2e`; não precisa iniciar servidores nem usar seu `.env`. O backend é procurado em `../backend`, configurável por `E2E_BACKEND_PATH`.
 
 Consulte [docs/real-e2e-integration.md](docs/real-e2e-integration.md) para cenários, distinção entre navegador/HTTP/concorrência, isolamento, preservação, comandos e limitações. Relatórios e evidências em `playwright-report/` e `test-results/` não entram no Git. `npm run typecheck` verifica também a infraestrutura TypeScript de E2E.
+
+
+## Gestão de serviços
+
+Após autenticar em `/admin`, escolha **Serviços** para listar ativos e inativos, cadastrar, editar ou alterar o estado de um serviço. Todas as escritas exigem revisão e confirmação; alterações no catálogo preservam os dados históricos das reservas. Agenda e Serviços compartilham a mesma sessão, cliente HTTP e CSRF.
+
+Veja [docs/admin-service-management.md](docs/admin-service-management.md) para contrato, validação de preços, reconciliação após falha de rede, segurança, histórico, testes reais e limitações de concorrência. Os quatro novos cenários E2E ampliam a suíte para 32 execuções entre desktop e viewport mobile, sem dependências novas.

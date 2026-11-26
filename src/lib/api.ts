@@ -1,3 +1,4 @@
+import { isAdminService, type ServiceInput } from './adminService'
 import { isAdminBooking, type BookingFilters, type AdminBookingList } from './adminBooking'
 import { BOOKING_TIMEZONE, isLocalDate, type PublicService, type Availability, type BookingInput, type BookingConfirmation } from './booking'
 
@@ -386,6 +387,74 @@ export async function cancelAdminBooking(
         'Não foi possível preparar o envio do cancelamento. Atualize a página e tente novamente.',
       )
     throw new CancellationOutcomeUnknownError()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function getAdminServices(signal?: AbortSignal) {
+  const payload = await requestJson<{ data?: unknown }>(
+    '/api/admin/services',
+    'Não foi possível consultar os serviços.',
+    { signal, cache: 'no-store' },
+  )
+  if (
+    !Array.isArray(payload.data) ||
+    !payload.data.every(isAdminService) ||
+    new Set(payload.data.map((s) => s.id)).size !== payload.data.length
+  )
+    throw new Error('Resposta de serviços inválida. Atualize a lista.')
+  return payload.data
+}
+export class ServiceOutcomeUnknownError extends Error {
+  constructor() {
+    super(
+      'Resultado não confirmado. O serviço pode ter sido salvo. Atualize a lista e confira os dados antes de uma nova operação; não há reenvio automático.',
+    )
+    this.name = 'ServiceOutcomeUnknownError'
+  }
+}
+export async function saveAdminService(
+  id: number | null,
+  input: Partial<ServiceInput>,
+  signal?: AbortSignal,
+) {
+  const body: Partial<ServiceInput> = {}
+  // Never serialize the model, ID, timestamps or arbitrary caller fields.
+  for (const key of ['name', 'description', 'priceCents', 'durationMinutes', 'isActive'] as const) {
+    if (Object.hasOwn(input, key)) Object.assign(body, { [key]: input[key] })
+  }
+  const timeout = new AbortController(),
+    timer = setTimeout(() => timeout.abort(), 20000)
+  let dispatched = false
+  try {
+    const response = await apiFetch(
+      id === null ? '/api/admin/services' : `/api/admin/services/${id}`,
+      {
+        ...jsonBody(body),
+        method: id === null ? 'POST' : 'PATCH',
+        signal: signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal,
+      },
+      () => {
+        dispatched = true
+      },
+    )
+    const payload = await readPayload(response)
+    if (!response.ok) throw apiError(response, payload, 'Não foi possível salvar o serviço.')
+    const service = (payload as { data?: unknown }).data
+    if (
+      response.status !== (id === null ? 201 : 200) ||
+      !isAdminService(service) ||
+      (id !== null && service.id !== id)
+    )
+      throw new ServiceOutcomeUnknownError()
+    return service
+  } catch (failure) {
+    if (failure instanceof ApiError) throw failure
+    if (dispatched) throw new ServiceOutcomeUnknownError()
+    throw new Error(
+      'Não foi possível preparar o envio. Nenhum serviço foi enviado. Atualize a página e tente novamente.',
+    )
   } finally {
     clearTimeout(timer)
   }
