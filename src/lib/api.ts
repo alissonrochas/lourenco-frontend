@@ -1,3 +1,4 @@
+import { validWeekly, validExceptions, type DayPatch, type ExceptionInput } from './adminSchedule'
 import { isAdminService, type ServiceInput } from './adminService'
 import { isAdminBooking, type BookingFilters, type AdminBookingList } from './adminBooking'
 import { BOOKING_TIMEZONE, isLocalDate, type PublicService, type Availability, type BookingInput, type BookingConfirmation } from './booking'
@@ -455,6 +456,83 @@ export async function saveAdminService(
     throw new Error(
       'Não foi possível preparar o envio. Nenhum serviço foi enviado. Atualize a página e tente novamente.',
     )
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+
+export class ScheduleOutcomeUnknownError extends Error {
+  constructor() {
+    super(
+      'Resultado não confirmado. A configuração pode ter sido salva. Recarregue o calendário antes de outra operação.',
+    )
+    this.name = 'ScheduleOutcomeUnknownError'
+  }
+}
+const validTag = (tag: string | null): tag is string => !!tag && /^"[a-f0-9]{64}"$/.test(tag)
+async function readSchedule<T>(
+  path: string,
+  validate: (value: unknown) => value is T,
+  signal?: AbortSignal,
+) {
+  const response = await apiFetch(path, { signal, cache: 'no-store' })
+  const payload = await readPayload(response)
+  if (!response.ok) throw apiError(response, payload, 'Não foi possível consultar o calendário.')
+  const data = (payload as { data?: unknown }).data,
+    tag = response.headers.get('ETag')
+  if (!validate(data) || !validTag(tag))
+    throw new Error(
+      'Resposta ou revisão de calendário inválida. Recarregue; se persistir, contate o suporte.',
+    )
+  return { data, tag }
+}
+export const getWeeklySchedule = (signal?: AbortSignal) =>
+  readSchedule('/api/admin/booking-settings', validWeekly, signal)
+export const getDateExceptions = (date: string, signal?: AbortSignal) =>
+  readSchedule(
+    `/api/admin/calendar-exceptions?${new URLSearchParams({ from: date, to: date })}`,
+    (value): value is import('./adminSchedule').DateExceptions => validExceptions(value, date),
+    signal,
+  )
+export async function saveSchedule(
+  kind: 'weekly' | 'date',
+  input: DayPatch | ExceptionInput,
+  tag: string,
+  signal?: AbortSignal,
+) {
+  if (!validTag(tag)) throw new Error('Recarregue a revisão do calendário antes de salvar.')
+  const timeout = new AbortController(),
+    timer = setTimeout(() => timeout.abort(), 20000)
+  let dispatched = false
+  try {
+    const response = await apiFetch(
+      kind === 'weekly' ? '/api/admin/booking-settings' : '/api/admin/calendar-exceptions',
+      {
+        ...jsonBody(kind === 'weekly' ? { days: [input] } : input),
+        method: kind === 'weekly' ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json', 'If-Match': tag },
+        signal: signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal,
+      },
+      () => {
+        dispatched = true
+      },
+    )
+    const payload = await readPayload(response)
+    if (!response.ok) throw apiError(response, payload, 'Não foi possível salvar o calendário.')
+    const data = (payload as { data?: unknown }).data
+    if (
+      response.status !== 200 ||
+      !validTag(response.headers.get('ETag')) ||
+      (kind === 'weekly'
+        ? !validWeekly(data)
+        : !validExceptions(data, (input as ExceptionInput).localDate))
+    )
+      throw new ScheduleOutcomeUnknownError()
+  } catch (failure) {
+    if (failure instanceof ApiError) throw failure
+    if (dispatched) throw new ScheduleOutcomeUnknownError()
+    throw failure
   } finally {
     clearTimeout(timer)
   }

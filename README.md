@@ -62,7 +62,7 @@ O módulo trata 401, 403 (incluindo `E_BAD_CSRF_TOKEN`), 419 e 429 com `Retry-Af
 
 A verificação inicial tem estado de carregamento. Falha de rede, CSRF ou servidor permite tentar novamente, sem presumir que a sessão acabou. O logout bem-sucedido volta ao formulário de login. Se a API já negar a sessão com 401/403 de autorização, a tela também volta ao login; se o logout falhar por CSRF, limite ou erro de servidor, a tela não afirma que a sessão terminou.
 
-O fluxo público usa GET /api/services, GET /api/availability e POST /api/bookings. Não faz cadastro de cliente separado nem exige login. O layout usa azul-marinho/dourado e controles responsivos. A área administrativa mantém sua sessão e login/logout, com painel administrativo de reservas. Configuração de calendário e cancelamento público continuam fora do escopo. A seção Serviços permite gerenciar o catálogo administrativo.
+O fluxo público usa GET /api/services, GET /api/availability e POST /api/bookings. Não faz cadastro de cliente separado nem exige login. O layout usa azul-marinho/dourado e controles responsivos. A área administrativa mantém sua sessão e login/logout, com painel administrativo de reservas. Cancelamento público continua fora do escopo. As seções Serviços e Horários permitem gerenciar o catálogo e o calendário administrativo.
 
 ## Testar e validar
 
@@ -104,3 +104,10 @@ Consulte [docs/real-e2e-integration.md](docs/real-e2e-integration.md) para cená
 Após autenticar em `/admin`, escolha **Serviços** para listar ativos e inativos, cadastrar, editar ou alterar o estado de um serviço. Todas as escritas exigem revisão e confirmação; alterações no catálogo preservam os dados históricos das reservas. Agenda e Serviços compartilham a mesma sessão, cliente HTTP e CSRF.
 
 Veja [docs/admin-service-management.md](docs/admin-service-management.md) para contrato, validação de preços, reconciliação após falha de rede, segurança, histórico, testes reais e limitações de concorrência. Os quatro novos cenários E2E ampliam a suíte para 32 execuções entre desktop e viewport mobile, sem dependências novas.
+
+
+## Gestão de horários e bloqueios
+
+Em `/admin`, escolha **Horários** para editar o funcionamento semanal, intervalos, bloqueios semanais e exceções por data. Toda escrita exige confirmação, CSRF e revisão ETag/If-Match. Reservas confirmadas conflitantes impedem a alteração inteira; nenhuma reserva é modificada automaticamente.
+
+Esta seção depende da [PR #15 do backend](https://github.com/alissonrochas/lourenco-backend/pull/15). Leia [docs/admin-schedule-management.md](docs/admin-schedule-management.md) para contratos, precedência de fechamentos, blocos de 60 minutos, revisões concorrentes, recuperação de falhas e testes reais.

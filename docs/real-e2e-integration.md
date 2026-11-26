@@ -43,7 +43,7 @@ Os processos são encerrados e a pasta descartável é removida em `finally`, in
 
 ## Cobertura e evidência
 
-São 16 cenários (12 originais e 4 de gestão de serviços), executados em desktop 1440×1000 e viewport mobile 390×844: 32 execuções. Ambos usam Chromium/Chrome com timezone `America/Sao_Paulo`; a execução mobile não é um teste de dispositivo físico ou Safari.
+São 22 cenários (12 originais, 4 de serviços e 6 de horários), executados em desktop 1440×1000 e viewport mobile 390×844: 44 execuções. Ambos usam Chromium/Chrome com timezone `America/Sao_Paulo`; a execução mobile não é um teste de dispositivo físico ou Safari.
 
 | Cenário | Navegador real | Verificação adicional real |
 | --- | --- | --- |
@@ -106,3 +106,8 @@ Durante a preparação, uma primeira execução completa identificou um erro no 
 ## Extensão da Etapa 7
 
 A suíte inclui S1–S4 para cadastro, edição, ativação/desativação, autorização/CSRF, resposta de criação perdida e preservação integral da reserva no SQLite. Mantém os fixtures e o isolamento anteriores, sem endpoints simulados ou mudanças no backend. Detalhes e resultados atuais estão em [admin-service-management.md](admin-service-management.md). A tabela de 24 execuções acima é o registro histórico da Etapa 6; a suíte atual contém 32 execuções.
+
+
+## Extensão da Etapa 8
+
+T1–T6 exercitam horários, intervalos, exceções, liberação, conflitos com reservas, revisões concorrentes, CSRF/revogação e resposta perdida com backend/SQLite reais. A suíte atual contém 44 execuções entre desktop e viewport mobile. O frontend depende da PR #15 backend para ETag/If-Match; setup e resultados estão em [admin-schedule-management.md](admin-schedule-management.md). As tabelas anteriores permanecem como registros históricos das respectivas etapas.
