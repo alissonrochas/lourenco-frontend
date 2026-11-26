@@ -48,7 +48,7 @@ export function SiteLayout() {
             </p>
           </aside>
         )}
-        <section className={publicRoute ? 'booking-panel' : 'admin-panel'}>
+        <section className={publicRoute ? 'booking-panel' : 'admin-panel admin-panel-agenda'}>
           <Outlet />
         </section>
       </main>

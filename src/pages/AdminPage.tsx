@@ -1,3 +1,4 @@
+import { BookingDashboard } from '@/components/admin/BookingDashboard'
 import { useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { FormField } from '@/components/FormField'
@@ -37,12 +38,13 @@ export function AdminPage() {
         <p className="text-sm font-medium uppercase tracking-[0.25em] text-slate-500">Acesso da gestão</p>
         <h2 className="text-3xl font-semibold">Área administrativa</h2>
         <p>Olá, {session.user.fullName || session.user.email}.</p>
-        <p className="text-slate-600">Sua sessão administrativa está ativa.</p>
+
         <Feedback message={session.notice} />
         <Feedback message={session.error} error />
         <Button type="button" variant="secondary" className="w-full" onClick={session.logout} disabled={session.pending}>
           {session.pending ? 'Saindo…' : 'Sair da gestão'}
         </Button>
+        {!session.pending && <BookingDashboard onDenied={session.deny} />}
       </div>
     )
   }

@@ -1,3 +1,4 @@
+import { isAdminBooking, type BookingFilters, type AdminBookingList } from './adminBooking'
 import { BOOKING_TIMEZONE, isLocalDate, type PublicService, type Availability, type BookingInput, type BookingConfirmation } from './booking'
 
 const API_URL = import.meta.env.VITE_API_URL?.replace(/\/$/, '') ?? ''
@@ -298,6 +299,93 @@ export async function createPublicBooking(
         'Não foi possível preparar o envio. Nenhuma reserva foi enviada. Atualize a página e tente novamente.',
       )
     throw new BookingOutcomeUnknownError()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function getAdminBookings(
+  filters: BookingFilters,
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({
+    from: filters.from,
+    to: filters.to,
+    page: String(filters.page),
+    perPage: String(filters.perPage),
+  })
+  const payload = await requestJson<AdminBookingList>(
+    `/api/admin/bookings?${query}`,
+    'Não foi possível consultar as reservas.',
+    { signal, cache: 'no-store' },
+  )
+  const meta = payload.meta
+  if (
+    !Array.isArray(payload.data) ||
+    !payload.data.every(isAdminBooking) ||
+    !meta ||
+    ![meta.page, meta.perPage, meta.total, meta.lastPage].every(
+      Number.isSafeInteger,
+    ) ||
+    meta.page !== filters.page ||
+    meta.perPage !== filters.perPage ||
+    meta.total < 0 ||
+    meta.perPage < 1 ||
+    meta.perPage > 100 ||
+    meta.lastPage !== Math.max(1, Math.ceil(meta.total / meta.perPage)) ||
+    payload.data.length > meta.perPage
+  )
+    throw new Error('Resposta de reservas inválida. Atualize a consulta.')
+  return payload
+}
+export class CancellationOutcomeUnknownError extends Error {
+  constructor() {
+    super(
+      'Não foi possível confirmar o resultado do cancelamento. Atualize a lista antes de tentar novamente.',
+    )
+    this.name = 'CancellationOutcomeUnknownError'
+  }
+}
+export async function cancelAdminBooking(
+  id: number,
+  reason: string,
+  signal?: AbortSignal,
+) {
+  const timeout = new AbortController()
+  const timer = setTimeout(() => timeout.abort(), 20000)
+  let dispatched = false
+  try {
+    const response = await apiFetch(
+      `/api/admin/bookings/${id}/cancel`,
+      {
+        ...jsonBody({ reason: reason.trim() }),
+        signal: signal
+          ? AbortSignal.any([signal, timeout.signal])
+          : timeout.signal,
+      },
+      () => {
+        dispatched = true
+      },
+    )
+    const payload = await readPayload(response)
+    if (!response.ok)
+      throw apiError(response, payload, 'Não foi possível cancelar a reserva.')
+    const booking = (payload as { data?: unknown }).data
+    if (
+      response.status !== 200 ||
+      !isAdminBooking(booking) ||
+      booking.id !== id ||
+      booking.status !== 'cancelled'
+    )
+      throw new CancellationOutcomeUnknownError()
+    return booking
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    if (!dispatched)
+      throw new Error(
+        'Não foi possível preparar o envio do cancelamento. Atualize a página e tente novamente.',
+      )
+    throw new CancellationOutcomeUnknownError()
   } finally {
     clearTimeout(timer)
   }

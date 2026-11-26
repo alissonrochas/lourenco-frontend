@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { errorMessage, getAdminSession, isSessionDenied, loginAdmin, logoutAdmin, type AdminUser } from '@/lib/api'
 
 type SessionStatus = 'checking' | 'guest' | 'authenticated' | 'unavailable'
@@ -76,11 +76,18 @@ export function useAdminSession() {
     }
   }
 
+  const deny = useCallback((failure: unknown) => {
+    setUser(null)
+    setStatus('guest')
+    setNotice(null)
+    setError(errorMessage(failure))
+  }, [])
+
   function retry() {
     setStatus('checking')
     setError(null)
     setAttempt((value) => value + 1)
   }
 
-  return { status, user, error, notice, pending, login, logout, retry }
+  return { status, user, error, notice, pending, login, logout, retry, deny }
 }
