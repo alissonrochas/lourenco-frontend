@@ -1,0 +1,179 @@
+import assert from 'node:assert/strict'
+import { fileURLToPath } from 'node:url'
+import { join, dirname, basename } from 'node:path'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { configProvider } from '@adonisjs/core'
+import { BaseCommand } from '@adonisjs/core/ace'
+import app from '@adonisjs/core/services/app'
+import db from '@adonisjs/lucid/services/db'
+import { MigrationRunner } from '@adonisjs/lucid/migration'
+import { DateTime } from 'luxon'
+
+export default class RealE2eFixture extends BaseCommand {
+  static commandName = 'real:e2e-fixture'
+  static options = { startApp: true }
+  async run() {
+    const root = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '')
+    assert.equal(root, process.env.E2E_BACKEND_ROOT)
+    assert.ok(basename(dirname(root)).startsWith('lourenco-real-e2e-'))
+    const marker = JSON.parse(readFileSync(join(dirname(root), 'context.json'), 'utf8'))
+    assert.equal(marker.token, process.env.E2E_TOKEN)
+    assert.equal(marker.backendRoot, root)
+    assert.equal(process.env.NODE_ENV, 'development')
+    assert.equal(
+      app.config.get('database.connections.sqlite.connection.filename'),
+      join(root, 'tmp/db.sqlite3'),
+    )
+    const session = await configProvider.resolve(app, app.config.get('session'))
+    assert.equal(session?.store, 'database')
+    assert.equal(app.config.get('shield.csrf.enabled'), true)
+    assert.deepEqual(app.config.get('shield.csrf.exceptRoutes'), [])
+    const { default: User } = await import('#models/user')
+    const { default: Service } = await import('#models/service')
+    const { default: Customer } = await import('#models/customer')
+    const { default: Booking } = await import('#models/booking')
+    const { default: WeeklyOpeningHour } = await import('#models/weekly_opening_hour')
+    const { default: WeeklyBreak } = await import('#models/weekly_break')
+    const { default: WeeklySlotBlock } = await import('#models/weekly_slot_block')
+    const { default: DateBlock } = await import('#models/date_block')
+    const { default: DateSlotBlock } = await import('#models/date_slot_block')
+    const { default: BookingCreationService } = await import('#services/booking_creation_service')
+    const { default: BookingAvailabilityService } =
+      await import('#services/booking_availability_service')
+    const mode = process.env.E2E_FIXTURE_MODE ?? 'base'
+    if (mode === 'revoke') {
+      await User.query().where('email', 'admin@e2e.example.test').update({ role: 'user' })
+      return
+    }
+    if (mode === 'expire') {
+      await db.from('sessions').delete()
+      return
+    }
+    assert.ok(['base', 'pagination', 'started'].includes(mode))
+    const runner = new MigrationRunner(db, app, { direction: 'up' })
+    await runner.run()
+    assert.ifError(runner.error)
+    assert.equal(runner.status, 'completed')
+    await db.transaction(async (trx) => {
+      for (const table of [
+        'bookings',
+        'sessions',
+        'date_slot_blocks',
+        'date_blocks',
+        'weekly_slot_blocks',
+        'weekly_breaks',
+        'weekly_opening_hours',
+        'booking_settings',
+        'customers',
+        'services',
+        'users',
+      ])
+        await trx.from(table).delete()
+    })
+    const admin = await User.create({
+      fullName: 'Administrador E2E',
+      email: 'admin@e2e.example.test',
+      password: 'E2eOnly!Password123',
+      role: 'admin',
+    })
+    await User.create({
+      fullName: 'Usuário E2E',
+      email: 'user@e2e.example.test',
+      password: 'E2eOnly!Password123',
+      role: 'user',
+    })
+    const service = await Service.create({
+      name: 'Corte E2E',
+      description: 'Serviço exclusivo do banco descartável.',
+      priceCents: 4500,
+      durationMinutes: 45,
+      isActive: true,
+    })
+    for (let weekday = 1; weekday <= 7; weekday++) {
+      const day = await WeeklyOpeningHour.create({
+        weekday,
+        isActive: true,
+        opensAtMinute: 540,
+        closesAtMinute: 1080,
+      })
+      await WeeklyBreak.create({
+        weeklyOpeningHourId: day.id,
+        startsAtMinute: 720,
+        endsAtMinute: 780,
+        isActive: true,
+      })
+      await WeeklySlotBlock.create({
+        weeklyOpeningHourId: day.id,
+        startsAtMinute: 600,
+        isBlocked: true,
+      })
+    }
+    const future = DateTime.now().setZone('America/Sao_Paulo').startOf('day').plus({ days: 7 })
+    const date = future.toISODate()!
+    await DateBlock.create({
+      localDate: future.plus({ days: 1 }).toISODate()!,
+      isBlocked: true,
+      reason: 'Fechamento E2E',
+    })
+    await DateSlotBlock.create({
+      localDate: date,
+      startsAtMinute: 900,
+      isBlocked: true,
+      reason: 'Bloqueio E2E',
+    })
+    const info: Record<string, unknown> = {
+      date,
+      closedDate: future.plus({ days: 1 }).toISODate(),
+      to: future.plus({ days: 14 }).toISODate(),
+      adminId: admin.id,
+      serviceId: service.id,
+    }
+    if (mode === 'pagination') {
+      let created = 0
+      const availability = new BookingAvailabilityService()
+      const creation = new BookingCreationService()
+      for (let offset = 0; offset <= 14 && created < 51; offset++) {
+        const localDate = future.plus({ days: offset }).toISODate()!
+        const result = await availability.calculate(localDate)
+        for (const slot of result.slots) {
+          if (created >= 51) break
+          await creation.create({
+            serviceId: service.id,
+            localDate,
+            startsAtMinute: slot.startsAtMinute,
+            name: 'Cliente Paginação E2E',
+            phone: '71970000000',
+          })
+          created++
+        }
+      }
+      assert.equal(created, 51)
+    }
+    if (mode === 'started') {
+      const start = DateTime.now()
+        .setZone('America/Sao_Paulo')
+        .startOf('day')
+        .minus({ days: 1 })
+        .set({ hour: 9 })
+      const customer = await Customer.create({
+        name: 'Cliente histórico E2E',
+        phone: '71971111111',
+        phoneNormalized: '71971111111',
+      })
+      const booking = await Booking.create({
+        customerId: customer.id,
+        serviceId: service.id,
+        startsAtUtc: start.toMillis(),
+        endsAtUtc: start.plus({ hours: 1 }).toMillis(),
+        localDate: start.toISODate()!,
+        startsAtMinute: 540,
+        status: 'confirmed',
+        serviceNameSnapshot: service.name,
+        servicePriceCentsSnapshot: service.priceCents,
+      })
+      info.startedId = booking.id
+      info.startedDate = booking.localDate
+    }
+    writeFileSync(join(dirname(root), 'fixture.json'), JSON.stringify(info))
+  }
+}
