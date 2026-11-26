@@ -412,3 +412,158 @@ test('E8 — real rate limiting and browser CORS visibility of Retry-After', asy
   )
   expect(visible).toBeNull() // Current backend explicitly exposes no response headers.
 })
+
+// Stage 7 uses the same real-server fixtures; no service endpoint is mocked.
+async function services(page: Page) {
+  await page.getByRole('button', { name: 'Serviços', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Editar serviço Corte E2E' })).toBeVisible()
+}
+async function confirmService(page: Page, method: 'POST' | 'PATCH') {
+  const response = page.waitForResponse(
+    (r) =>
+      new URL(r.url()).pathname.startsWith('/api/admin/services') &&
+      r.request().method() === method,
+  )
+  await page.getByRole('button', { name: 'Confirmar alteração' }).click()
+  const saved = await response
+  expect(saved.status()).toBe(method === 'POST' ? 201 : 200)
+  expect(await saved.request().headerValue('X-XSRF-TOKEN')).toBeTruthy()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  return saved
+}
+test('S1 — browser creates a service with exact cents, confirmation and public offer', async ({
+  page,
+}, testInfo) => {
+  await login(page)
+  await services(page)
+  await page.getByRole('button', { name: 'Novo serviço', exact: true }).click()
+  await expect(page.getByLabel('Nome do serviço')).toBeFocused()
+  await page.getByLabel('Nome do serviço').fill('Barba E2E')
+  await page.getByLabel('Descrição (opcional)').fill('  Toalha quente  ')
+  await page.getByLabel('Preço (R$)').fill('32,999')
+  await page.getByLabel('Duração (minutos)').fill('30')
+  await page.getByRole('button', { name: 'Revisar alterações' }).click()
+  await expect(page.getByRole('alert')).toContainText('duas casas')
+  expect(rows('SELECT COUNT(*) AS total FROM services')[0].total).toBe(1)
+  await page.getByLabel('Preço (R$)').fill('32,99')
+  await page.getByRole('button', { name: 'Revisar alterações' }).click()
+  await expect(page.getByRole('button', { name: 'Voltar sem salvar' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Revisar alterações' })).toBeFocused()
+  expect(rows('SELECT COUNT(*) AS total FROM services')[0].total).toBe(1)
+  await page.keyboard.press('Enter')
+  await confirmService(page, 'POST')
+  await expect(page.getByRole('button', { name: 'Editar serviço Barba E2E' })).toBeVisible()
+  const saved = rows('SELECT * FROM services WHERE name = ?', ['Barba E2E'])[0]
+  expect(saved.price_cents).toBe(3299)
+  expect(saved.duration_minutes).toBe(30)
+  expect(saved.description).toBe('Toalha quente')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  )
+  await page.screenshot({ path: testInfo.outputPath('services-dashboard.png'), fullPage: true })
+  await page.goto('/')
+  await expect(page.getByRole('radio', { name: /Barba E2E/ })).toBeVisible()
+})
+test('S2 — service edits and activation preserve every persisted booking field and historical UI', async ({
+  page,
+  integration,
+}) => {
+  const original = await book(page, integration)
+  await login(page)
+  await services(page)
+  await page.getByRole('button', { name: 'Editar serviço Corte E2E' }).click()
+  await page.getByLabel('Nome do serviço').fill('Corte Premium E2E')
+  await page.getByLabel('Descrição (opcional)').fill('Nova descrição')
+  await page.getByLabel('Preço (R$)').fill('65,50')
+  await page.getByLabel('Duração (minutos)').fill('90')
+  await page.getByRole('button', { name: 'Revisar alterações' }).click()
+  const response = await confirmService(page, 'PATCH')
+  expect(response.request().postDataJSON()).toEqual({
+    name: 'Corte Premium E2E',
+    description: 'Nova descrição',
+    priceCents: 6550,
+    durationMinutes: 90,
+  })
+  await expect(page.getByRole('button', { name: 'Editar serviço Corte Premium E2E' })).toBeVisible()
+  await page.getByRole('button', { name: 'Desativar serviço Corte Premium E2E' }).click()
+  await expect(page.getByRole('dialog')).toContainText('deixará de ser oferecido')
+  await confirmService(page, 'PATCH')
+  await expect(page.getByText('Inativo', { exact: true })).toBeVisible()
+  expect(rows('SELECT * FROM bookings WHERE id = ?', [original.id])[0]).toEqual(original)
+  await page.getByRole('button', { name: 'Agenda', exact: true }).click()
+  await filter(page, integration.date)
+  await expect(page.locator('.agenda-card')).toContainText('Corte E2E')
+  await expect(page.locator('.agenda-card')).toContainText('R$ 45,00')
+  await expect(page.locator('.agenda-card')).not.toContainText('65,50')
+  await page.goto('/')
+  await expect(page.getByText(/Nenhum serviço disponível no momento/)).toBeVisible()
+  await expect(page.getByRole('radio')).toHaveCount(0)
+  await page.goto('/admin')
+  await page.getByRole('button', { name: 'Serviços', exact: true }).click()
+  await page.getByRole('button', { name: 'Ativar serviço Corte Premium E2E' }).click()
+  await confirmService(page, 'PATCH')
+  await expect(page.getByText('Ativo', { exact: true })).toBeVisible()
+  expect(rows('SELECT * FROM bookings WHERE id = ?', [original.id])[0]).toEqual(original)
+  await page.goto('/')
+  await expect(page.getByRole('radio', { name: /Corte Premium E2E/ })).toBeVisible()
+})
+test('S3 — real service authorization, CSRF and role revocation keep data protected', async ({
+  page,
+  context,
+  request,
+  integration,
+}) => {
+  expect((await request.get(`${env.backendURL}/api/admin/services`)).status()).toBe(401)
+  await login(page)
+  await services(page)
+  const before = rows('SELECT * FROM services')
+  const denied = await context.request.patch(
+    `${env.backendURL}/api/admin/services/${integration.serviceId}`,
+    { data: { isActive: false } },
+  )
+  expect(denied.status()).toBe(403)
+  expect((await denied.json()).code).toBe('E_BAD_CSRF_TOKEN')
+  expect(rows('SELECT * FROM services')).toEqual(before)
+  await fixture('revoke')
+  await page.getByRole('button', { name: 'Atualizar serviços' }).click()
+  await expect(page.getByRole('heading', { name: 'Login do administrador' })).toBeVisible()
+  await expect(page.getByText('Corte E2E', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Novo serviço' })).toHaveCount(0)
+})
+test('S4 — lost real creation response blocks writes until server reconciliation without duplicate', async ({
+  page,
+}) => {
+  await login(page)
+  await services(page)
+  await page.getByRole('button', { name: 'Novo serviço', exact: true }).click()
+  await page.getByLabel('Nome do serviço').fill('Resultado incerto E2E')
+  await page.getByLabel('Preço (R$)').fill('20')
+  await page.getByRole('button', { name: 'Revisar alterações' }).click()
+  let sent = 0
+  await page.route(`${env.backendURL}/api/admin/services`, async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue()
+      return
+    }
+    sent++
+    const real = await route.fetch()
+    expect(real.status()).toBe(201)
+    await route.abort('failed')
+  })
+  await page.getByRole('button', { name: 'Confirmar alteração' }).click()
+  await expect(page.getByRole('alert')).toContainText('O serviço pode ter sido salvo')
+  await expect(page.getByRole('button', { name: 'Novo serviço', exact: true })).toBeDisabled()
+  expect(sent).toBe(1)
+  expect(
+    rows('SELECT COUNT(*) AS total FROM services WHERE name = ?', ['Resultado incerto E2E'])[0]
+      .total,
+  ).toBe(1)
+  await page.getByRole('button', { name: 'Atualizar serviços' }).click()
+  await expect(
+    page.getByRole('button', { name: 'Editar serviço Resultado incerto E2E' }),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Novo serviço', exact: true })).toBeEnabled()
+  expect(sent).toBe(1)
+})
