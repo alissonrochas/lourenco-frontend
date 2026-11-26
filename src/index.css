@@ -311,3 +311,22 @@ body {
 .service-check { display: flex; align-items: center; gap: 12px; min-height: 48px; }
 .service-check input { width: 20px; height: 20px; accent-color: #172f47; }
 @media (max-width: 480px) { .service-editor { padding: 18px 12px; } .service-numbers { grid-template-columns: 1fr; } }
+
+.schedule-area { margin-top: 28px; border-top: 1px solid #d8e0e7; padding-top: 24px; }
+.schedule-area h4 { font-size: 1.3rem; font-weight: 600; margin-bottom: 20px; }
+.schedule-area h5 { font-weight: 600; margin: 16px 0 10px; }
+.schedule-form { margin-top: 20px; }
+.schedule-form fieldset { min-width: 0; border: 1px solid #d6dfe7; border-radius: 12px; padding: 20px; display: grid; gap: 16px; }
+.schedule-form legend { font-weight: 600; padding: 0 8px; }
+.schedule-field { display: grid; gap: 8px; min-width: 0; color: #334155; font-size: .9rem; }
+.schedule-field select, .schedule-field input, .schedule-field textarea { min-width: 0; width: 100%; min-height: 48px; padding: 10px; background: white; border: 1px solid #acb8c5; border-radius: 8px; font: inherit; }
+.schedule-field textarea { resize: vertical; }
+.schedule-pause { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
+.schedule-hours { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
+.schedule-hours label { display: flex; gap: 8px; align-items: center; padding: 8px; min-height: 46px; border: 1px solid #d6dfe7; border-radius: 8px; font-size: .875rem; }
+.schedule-hours input { width: 18px; height: 18px; accent-color: #172f47; flex-shrink: 0; }
+.schedule-hours label:has(input:disabled) { opacity: .5; }
+.schedule-query { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 20px; }
+.schedule-records { display: grid; gap: 12px; margin: 16px 0; }
+.schedule-records li { border: 1px solid #d6dfe7; padding: 14px; border-radius: 8px; overflow-wrap: anywhere; }
+@media (max-width: 720px) { .schedule-hours { grid-template-columns: repeat(2,minmax(0,1fr)); } .schedule-pause { grid-template-columns: 1fr 1fr; } .schedule-form fieldset { padding: 16px 10px; } }

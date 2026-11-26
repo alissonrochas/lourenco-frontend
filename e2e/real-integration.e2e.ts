@@ -567,3 +567,244 @@ test('S4 — lost real creation response blocks writes until server reconciliati
   await expect(page.getByRole('button', { name: 'Novo serviço', exact: true })).toBeEnabled()
   expect(sent).toBe(1)
 })
+
+async function schedule(page: Page, info: FixtureInfo) {
+  await page.getByRole('button', { name: 'Horários', exact: true }).click()
+  await expect(page.getByLabel('Dia da semana')).toBeVisible()
+  const response = await page.request.get(`${env.backendURL}/api/availability?date=${info.date}`)
+  const body = await response.json()
+  await page.getByLabel('Dia da semana').selectOption(String(body.data.weekday))
+}
+async function confirmCalendar(page: Page, status = 200) {
+  const response = page.waitForResponse(
+    (r) =>
+      ['/api/admin/booking-settings', '/api/admin/calendar-exceptions'].includes(
+        new URL(r.url()).pathname,
+      ) && ['POST', 'PATCH'].includes(r.request().method()),
+  )
+  await page.getByRole('button', { name: 'Confirmar calendário', exact: true }).click()
+  const result = await response
+  expect(result.status()).toBe(status)
+  expect(await result.request().headerValue('If-Match')).toMatch(/^"[a-f0-9]{64}"$/)
+  expect(await result.request().headerValue('X-XSRF-TOKEN')).toBeTruthy()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  return result
+}
+async function dateQuery(page: Page, date: string) {
+  await page.getByLabel('Data dos bloqueios').fill(date)
+  const response = page.waitForResponse(
+    (r) =>
+      new URL(r.url()).pathname === '/api/admin/calendar-exceptions' &&
+      new URL(r.url()).searchParams.get('from') === date,
+  )
+  await page.getByRole('button', { name: 'Consultar data', exact: true }).click()
+  expect((await response).status()).toBe(200)
+  await expect(page.getByRole('status').filter({ hasText: 'Carregando calendário' })).toHaveCount(0)
+}
+async function available(page: Page, date: string): Promise<number[]> {
+  const response = await page.request.get(`${env.backendURL}/api/availability?date=${date}`)
+  expect(response.status()).toBe(200)
+  const body = await response.json()
+  expect(JSON.stringify(body)).not.toContain('Motivo privado E2E')
+  return body.data.slots.map((s: { startsAtMinute: number }) => s.startsAtMinute)
+}
+test('T1 — weekly hours, multiple pauses, closed day, persistence and public engine', async ({
+  page,
+  integration,
+}, testInfo) => {
+  await login(page)
+  await schedule(page, integration)
+  await page.getByLabel('Abertura', { exact: true }).selectOption('480')
+  await page.getByLabel('Encerramento', { exact: true }).selectOption('1020')
+  await page.getByLabel('Fim do intervalo 1', { exact: true }).selectOption('840')
+  await page.getByRole('button', { name: 'Adicionar intervalo' }).click()
+  await page.getByLabel('Início do intervalo 2', { exact: true }).selectOption('780')
+  await page.getByLabel('Fim do intervalo 2', { exact: true }).selectOption('900')
+  await page.getByRole('button', { name: 'Revisar dia semanal' }).click()
+  await expect(page.getByRole('alert')).toContainText('sem sobreposição')
+  await page.getByLabel('Início do intervalo 2', { exact: true }).selectOption('840')
+  await page.getByRole('button', { name: 'Revisar dia semanal' }).click()
+  await expect(page.getByRole('button', { name: 'Voltar sem alterar' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button', { name: 'Revisar dia semanal' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await confirmCalendar(page)
+  expect(await available(page, integration.date)).toEqual([480, 540, 660, 960])
+  await page.reload()
+  await schedule(page, integration)
+  await expect(page.getByLabel('Abertura', { exact: true })).toHaveValue('480')
+  await expect(page.getByLabel('Encerramento', { exact: true })).toHaveValue('1020')
+  await expect(page.getByLabel('Início do intervalo 2', { exact: true })).toHaveValue('840')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('schedule-dashboard.png'), fullPage: true })
+  await page.getByLabel('Atendimento ativo neste dia').uncheck()
+  await page.getByRole('button', { name: 'Revisar dia semanal' }).click()
+  await confirmCalendar(page)
+  expect(await available(page, integration.date)).toEqual([])
+  await page.getByLabel('Atendimento ativo neste dia').check()
+  await page.getByRole('button', { name: 'Revisar dia semanal' }).click()
+  await confirmCalendar(page)
+  expect(await available(page, integration.date)).toEqual([480, 540, 660, 960])
+})
+test('T2 — exceptional full/partial blocks and releases respect all remaining closures', async ({
+  page,
+  integration,
+}) => {
+  await login(page)
+  await schedule(page, integration)
+  await dateQuery(page, integration.date)
+  async function change(full: boolean, blocked: boolean, slots: string[] = []) {
+    await page.getByLabel('Operação', { exact: true }).selectOption(blocked ? 'block' : 'release')
+    await page.getByLabel('Abrangência', { exact: true }).selectOption(full ? 'day' : 'slots')
+    for (const hour of slots)
+      await page.getByLabel(`Horário excepcional ${hour}`, { exact: true }).check()
+    await page.getByLabel('Motivo administrativo (opcional)').fill('Motivo privado E2E')
+    await page.getByRole('button', { name: 'Revisar bloqueios da data' }).click()
+    await confirmCalendar(page)
+  }
+  const initial = await available(page, integration.date)
+  await change(false, true, ['11:00', '16:00'])
+  expect(await available(page, integration.date)).toEqual(
+    initial.filter((m) => ![660, 960].includes(m)),
+  )
+  const ids = rows('SELECT id, created_at FROM date_slot_blocks WHERE local_date=? ORDER BY id', [
+    integration.date,
+  ])
+  await change(true, true)
+  expect(await available(page, integration.date)).toEqual([])
+  await change(false, false, ['16:00', '10:00', '12:00'])
+  expect(await available(page, integration.date)).toEqual([]) // Whole-date closure wins.
+  await change(true, false)
+  expect(await available(page, integration.date)).toEqual(initial.filter((m) => m !== 660))
+  for (const row of ids)
+    expect(rows('SELECT id, created_at FROM date_slot_blocks WHERE id=?', [row.id])[0]).toEqual(row)
+  expect(
+    rows('SELECT is_blocked FROM date_blocks WHERE local_date=?', [integration.date])[0].is_blocked,
+  ).toBe(0)
+  await page.getByLabel('Atendimento ativo neste dia').uncheck()
+  await page.getByRole('button', { name: 'Revisar dia semanal' }).click()
+  await confirmCalendar(page)
+  await change(true, false)
+  expect(await available(page, integration.date)).toEqual([]) // Release never opens a closed weekday.
+})
+test('T3 — weekly/date conflicts rollback fully and preserve confirmed booking snapshots and audit', async ({
+  page,
+  integration,
+}) => {
+  const booking = await book(page, integration)
+  const weekly = rows('SELECT * FROM weekly_opening_hours ORDER BY id')
+  await login(page)
+  await schedule(page, integration)
+  await page.getByLabel('Atendimento ativo neste dia').uncheck()
+  await page.getByRole('button', { name: 'Revisar dia semanal' }).click()
+  await confirmCalendar(page, 409)
+  await expect(page.getByRole('alert')).toContainText('reservas confirmadas')
+  expect(rows('SELECT * FROM weekly_opening_hours ORDER BY id')).toEqual(weekly)
+  await page.getByRole('button', { name: 'Recarregar calendário', exact: true }).click()
+  await expect(page.getByLabel('Dia da semana')).toBeVisible()
+  await dateQuery(page, integration.date)
+  await page.getByRole('button', { name: 'Revisar bloqueios da data' }).click()
+  await confirmCalendar(page, 409)
+  expect(rows('SELECT * FROM date_blocks WHERE local_date=?', [integration.date])).toEqual([])
+  await page.getByRole('button', { name: 'Recarregar calendário', exact: true }).click()
+  await expect(page.getByLabel('Abrangência')).toBeVisible()
+  await page.getByLabel('Abrangência').selectOption('slots')
+  await page.getByLabel('Horário excepcional 09:00', { exact: true }).check()
+  await page.getByRole('button', { name: 'Revisar bloqueios da data' }).click()
+  await confirmCalendar(page, 409)
+  expect(rows('SELECT * FROM bookings WHERE id=?', [booking.id])[0]).toEqual(booking)
+  expect(rows("SELECT COUNT(*) AS total FROM bookings WHERE status='confirmed'")[0].total).toBe(1)
+  expect(await available(page, integration.date)).not.toContain(540)
+})
+test('T4 — two browser administrators cannot overwrite a stale weekly revision', async ({
+  page,
+  browser,
+  integration,
+}) => {
+  await login(page)
+  await schedule(page, integration)
+  const second = await browser.newContext({
+    baseURL: env.frontendURL,
+    timezoneId: 'America/Sao_Paulo',
+    viewport: page.viewportSize()!,
+  })
+  try {
+    const other = await second.newPage()
+    await login(other)
+    await schedule(other, integration)
+    await page.getByLabel('Encerramento', { exact: true }).selectOption('1020')
+    await other.getByLabel('Encerramento', { exact: true }).selectOption('960')
+    await page.getByRole('button', { name: 'Revisar dia semanal' }).click()
+    await confirmCalendar(page)
+    const snapshot = rows('SELECT * FROM weekly_opening_hours ORDER BY id')
+    await other.getByRole('button', { name: 'Revisar dia semanal' }).click()
+    await confirmCalendar(other, 409)
+    await expect(other.getByRole('alert')).toContainText('outra operação')
+    expect(rows('SELECT * FROM weekly_opening_hours ORDER BY id')).toEqual(snapshot)
+  } finally {
+    await second.close()
+  }
+})
+test('T5 — calendar endpoints keep session authorization, CSRF and private reason protection', async ({
+  page,
+  context,
+  request,
+  integration,
+}) => {
+  for (const path of [
+    '/api/admin/booking-settings',
+    `/api/admin/calendar-exceptions?from=${integration.date}&to=${integration.date}`,
+  ])
+    expect((await request.get(env.backendURL + path)).status()).toBe(401)
+  await login(page)
+  await schedule(page, integration)
+  const before = rows('SELECT * FROM weekly_opening_hours ORDER BY id')
+  const noCsrf = await context.request.patch(`${env.backendURL}/api/admin/booking-settings`, {
+    data: { days: [{ weekday: 1, isActive: false }] },
+  })
+  expect(noCsrf.status()).toBe(403)
+  expect((await noCsrf.json()).code).toBe('E_BAD_CSRF_TOKEN')
+  const noDateCsrf = await context.request.post(`${env.backendURL}/api/admin/calendar-exceptions`, {
+    data: { localDate: integration.date, dayBlock: { isBlocked: true } },
+  })
+  expect(noDateCsrf.status()).toBe(403)
+  expect(rows('SELECT * FROM weekly_opening_hours ORDER BY id')).toEqual(before)
+  await fixture('revoke')
+  await page.getByRole('button', { name: 'Recarregar calendário', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Login do administrador' })).toBeVisible()
+  await expect(page.getByLabel('Dia da semana')).toHaveCount(0)
+})
+test('T6 — lost calendar write response requires successful real reconciliation without retries', async ({
+  page,
+  integration,
+}) => {
+  await login(page)
+  await schedule(page, integration)
+  await dateQuery(page, integration.date)
+  let sent = 0,
+    failRead = true
+  await page.route(`${env.backendURL}/api/admin/calendar-exceptions**`, async (route) => {
+    if (route.request().method() === 'POST') {
+      sent++
+      const response = await route.fetch()
+      expect(response.status()).toBe(200)
+      await route.abort('failed')
+    } else if (failRead) await route.abort('failed')
+    else await route.continue()
+  })
+  await page.getByRole('button', { name: 'Revisar bloqueios da data' }).click()
+  await page.getByRole('button', { name: 'Confirmar calendário', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Resultado não confirmado')
+  await expect(page.getByRole('button', { name: 'Revisar dia semanal' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Recarregar calendário', exact: true }).click()
+  await expect(page.getByRole('alert')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Revisar dia semanal' })).toHaveCount(0)
+  failRead = false
+  await page.getByRole('button', { name: 'Recarregar calendário', exact: true }).click()
+  await expect(page.getByText('Dia inteiro · Bloqueado', { exact: true })).toBeVisible()
+  expect(sent).toBe(1)
+  expect(
+    rows('SELECT COUNT(*) AS total FROM date_blocks WHERE local_date=?', [integration.date])[0]
+      .total,
+  ).toBe(1)
+})
