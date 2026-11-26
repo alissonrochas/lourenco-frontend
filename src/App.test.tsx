@@ -9,7 +9,10 @@ function json(payload: unknown, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), { status, headers: { 'Content-Type': 'application/json', ...headers } })
 }
 function mockApi(handler: (path: string, init?: RequestInit) => Response | Promise<Response>) {
-  const fetchMock = vi.fn((input: string, init?: RequestInit) => Promise.resolve(handler(new URL(input, window.location.origin).pathname, init)))
+  const fetchMock = vi.fn((input: string, init?: RequestInit) => {
+    const path = new URL(input, window.location.origin).pathname
+    return Promise.resolve(path === '/api/admin/bookings' ? json({ data: [], meta: { page: 1, perPage: 50, total: 0, lastPage: 1 } }) : handler(path, init))
+  })
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
 }
@@ -60,7 +63,7 @@ it('restores a valid server session on direct /admin access and on remount witho
   openPage('/admin')
   await screen.findByRole('heading', { name: 'Área administrativa' })
   expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2)
-  expect(fetchMock.mock.calls.every(([url, init]) => url.endsWith('/api/admin/me') && init?.credentials === 'include')).toBe(true)
+  expect(fetchMock.mock.calls.every(([url, init]) => (url.includes('/api/admin/bookings?') || url.endsWith('/api/admin/me')) && init?.credentials === 'include')).toBe(true)
   expect(document.cookie).not.toContain('XSRF-TOKEN=')
   expect(fetchMock.mock.calls.every(([, init]) => !new Headers(init?.headers).has('X-XSRF-TOKEN'))).toBe(true)
 })

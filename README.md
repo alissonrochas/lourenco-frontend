@@ -5,7 +5,7 @@ React 19 + TypeScript + Vite 8. Nesta fase, a experiência pública e a gestão 
 ## Rotas e arquitetura
 
 - `/`: agendamento público em cinco etapas, consumindo serviços e disponibilidade reais; confirmação somente após POST /api/bookings com resposta 201 válida. Consulte [o contrato e roteiro completo](docs/public-booking-flow.md).
-- `/admin`: verifica a sessão com `GET /api/admin/me`. Sem sessão válida, mostra login; com sessão administrativa, mostra uma tela inicial com logout.
+- `/admin`: verifica a sessão com `GET /api/admin/me`. Sem sessão válida, mostra login; com sessão administrativa, oferece agenda por data/período, paginação, histórico e cancelamento futuro com motivo, além de logout. Consulte [o painel administrativo](docs/admin-booking-dashboard.md).
 - Outros caminhos: página não encontrada, sem redirecionamento silencioso para a área pública.
 
 ```text
@@ -62,7 +62,7 @@ O módulo trata 401, 403 (incluindo `E_BAD_CSRF_TOKEN`), 419 e 429 com `Retry-Af
 
 A verificação inicial tem estado de carregamento. Falha de rede, CSRF ou servidor permite tentar novamente, sem presumir que a sessão acabou. O logout bem-sucedido volta ao formulário de login. Se a API já negar a sessão com 401/403 de autorização, a tela também volta ao login; se o logout falhar por CSRF, limite ou erro de servidor, a tela não afirma que a sessão terminou.
 
-O fluxo público usa GET /api/services, GET /api/availability e POST /api/bookings. Não faz cadastro de cliente separado nem exige login. O layout usa azul-marinho/dourado e controles responsivos. A área administrativa mantém sua sessão e login/logout, sem painel de reservas novo.
+O fluxo público usa GET /api/services, GET /api/availability e POST /api/bookings. Não faz cadastro de cliente separado nem exige login. O layout usa azul-marinho/dourado e controles responsivos. A área administrativa mantém sua sessão e login/logout, com painel administrativo de reservas. Edição de serviços/calendário e cancelamento público continuam fora do escopo.
 
 ## Testar e validar
 
@@ -89,3 +89,5 @@ O aviso de Fast Refresh em `src/components/ui/button.tsx` já existia antes dest
 Nome e telefone ficam somente em memória; não são persistidos em storage pela aplicação. Uma resposta perdida após POST pode representar uma reserva criada: não há idempotência ou recuperação pública. A interface bloqueia reenvio no estado incerto e orienta contato com a barbearia.
 
 Limitação atual: o CORS do backend não expõe Retry-After em outra origem. O frontend aguarda conservadoramente 60 segundos quando o header não é legível; para o contador exato, usar proxy de mesma origem ou tratar a exposição do header em PR separada do backend.
+
+A agenda administrativa monta apenas após a confirmação de sessão. Registros, contato e motivo ficam em memória; logout/negação de acesso remove esses dados da tela. Uma falha de rede no cancelamento exige consulta nova antes de outra tentativa, sem retry automático. Veja [docs/admin-booking-dashboard.md](docs/admin-booking-dashboard.md) para contratos, limites, privacidade e roteiro de validação.
