@@ -28,16 +28,16 @@ beforeEach(() => {
 })
 
 it('keeps the public form separate and navigates using real URLs, back and forward', async () => {
-  const fetchMock = mockApi(() => json({}, 401))
+  const fetchMock = mockApi((path) => path === '/api/services' ? json({ data: [] }) : json({}, 401))
   openPage()
-  expect(screen.getByRole('heading', { name: 'Novo cliente' })).toBeTruthy()
-  expect(fetchMock).not.toHaveBeenCalled()
+  expect(screen.getByRole('heading', { name: 'Agende seu horário' })).toBeTruthy()
+  expect(fetchMock.mock.calls.every(([url]) => url.endsWith('/api/services'))).toBe(true)
   fireEvent.click(screen.getByRole('link', { name: 'Gestão' }))
   await screen.findByRole('heading', { name: 'Login do administrador' })
   expect(window.location.pathname).toBe('/admin')
   expect(screen.queryByLabelText('Nome completo')).toBeNull()
   window.history.back()
-  await screen.findByRole('heading', { name: 'Novo cliente' })
+  await screen.findByRole('heading', { name: 'Agende seu horário' })
   expect(window.location.pathname).toBe('/')
   window.history.forward()
   await screen.findByRole('heading', { name: 'Login do administrador' })
@@ -47,30 +47,6 @@ it('keeps the public form separate and navigates using real URLs, back and forwa
 it('shows a not-found page for unknown routes', () => {
   openPage('/nao-existe')
   expect(screen.getByRole('heading', { name: 'Página não encontrada' })).toBeTruthy()
-})
-
-it('submits the public form with a generic acknowledgement and no internal customer data', async () => {
-  const fetchMock = mockApi(() => json({ message: 'Solicitação recebida.', name: 'Nome privado', id: 42 }))
-  openPage()
-  fireEvent.change(screen.getByLabelText('Nome completo'), { target: { value: 'João Silva' } })
-  fireEvent.change(screen.getByLabelText('Telefone'), { target: { value: '(11) 99999-1234' } })
-  fireEvent.submit(screen.getByRole('form', { name: 'Novo cliente' }))
-  expect((await screen.findByRole('status')).textContent).toBe('Solicitação recebida.')
-  expect(screen.queryByText(/Nome privado|cadastrado com sucesso|undefined|agendamento confirmado/i)).toBeNull()
-  expect((screen.getByLabelText('Nome completo') as HTMLInputElement).value).toBe('')
-  expect((screen.getByLabelText('Telefone') as HTMLInputElement).value).toBe('')
-  expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({ name: 'João Silva', phone: '(11) 99999-1234' })
-})
-
-it('preserves public input and displays Retry-After when rate limited', async () => {
-  mockApi(() => json({}, 429, { 'Retry-After': '30' }))
-  openPage()
-  fireEvent.change(screen.getByLabelText('Nome completo'), { target: { value: 'João Silva' } })
-  fireEvent.change(screen.getByLabelText('Telefone'), { target: { value: '11999991234' } })
-  fireEvent.submit(screen.getByRole('form', { name: 'Novo cliente' }))
-  expect((await screen.findByRole('alert')).textContent).toContain('30 segundos')
-  expect((screen.getByLabelText('Nome completo') as HTMLInputElement).value).toBe('João Silva')
-  expect(screen.queryByRole('status')).toBeNull()
 })
 
 it('restores a valid server session on direct /admin access and on remount without logging out', async () => {
