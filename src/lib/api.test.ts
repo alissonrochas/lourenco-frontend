@@ -177,3 +177,96 @@ describe('HTTP errors', () => {
     await expect(getAdminSession()).rejects.toThrow('Não foi possível confirmar a sessão administrativa.')
   })
 })
+
+// Public booking shares the original transport and CSRF preparation.
+describe('public booking contracts', () => {
+  it('uses server contracts for catalogue/availability and preserves credentials without CSRF on reads', async () => {
+    const { getPublicServices, getPublicAvailability } = await import('./api')
+    const { service, availability, date } =
+      await import('@/test/bookingFixtures')
+    document.cookie = 'XSRF-TOKEN=; Max-Age=0; path=/'
+    const mock = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(init?.credentials).toBe('include')
+      expect(new Headers(init?.headers).has('X-XSRF-TOKEN')).toBe(false)
+      return json({
+        data: url.includes('/availability') ? availability(date) : [service],
+      })
+    })
+    vi.stubGlobal('fetch', mock)
+    await expect(getPublicServices()).resolves.toEqual([service])
+    await expect(getPublicAvailability(date)).resolves.toEqual(
+      availability(date),
+    )
+    expect(mock).toHaveBeenCalledTimes(2)
+  })
+
+  it('recognizes an HTTP-date Retry-After as a real retry deadline', async () => {
+    const { getPublicServices } = await import('./api')
+    const date = new Date(Date.now() + 30000).toUTCString()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(json({}, 429, { 'Retry-After': date })),
+    )
+    try {
+      await getPublicServices()
+      expect.unreachable()
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError)
+      expect((error as ApiError).retryAfterSeconds).toBeGreaterThanOrEqual(29)
+      expect((error as ApiError).retryAfterSeconds).toBeLessThanOrEqual(30)
+    }
+  })
+
+  it.each([200, 201])(
+    'never confirms malformed successful booking HTTP %s',
+    async (status) => {
+      const { createPublicBooking, BookingOutcomeUnknownError } =
+        await import('./api')
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(json({ data: { id: 1 } }, status)),
+      )
+      await expect(
+        createPublicBooking({
+          serviceId: 1,
+          localDate: '2099-12-28',
+          startsAtMinute: 540,
+          name: 'Cliente',
+          phone: '71999999999',
+        }),
+      ).rejects.toBeInstanceOf(BookingOutcomeUnknownError)
+    },
+  )
+})
+
+describe('booking dispatch boundary', () => {
+  it('does not mark a CSRF preparation network failure as a possibly created reservation', async () => {
+    const { createPublicBooking, BookingOutcomeUnknownError } =
+      await import('./api')
+    document.cookie = 'XSRF-TOKEN=; Max-Age=0; path=/'
+    const mock = vi.fn().mockRejectedValue(new TypeError('Offline'))
+    vi.stubGlobal('fetch', mock)
+    const input = {
+      serviceId: 1,
+      localDate: '2099-12-28',
+      startsAtMinute: 540,
+      name: 'Cliente',
+      phone: '71999999999',
+    }
+    try {
+      await createPublicBooking(input)
+      expect.unreachable()
+    } catch (error) {
+      expect(error).not.toBeInstanceOf(BookingOutcomeUnknownError)
+      expect((error as Error).message).toContain('Nenhuma reserva foi enviada')
+    }
+    expect(mock).toHaveBeenCalledTimes(1)
+    expect(mock.mock.calls[0][0]).toMatch(/\/api\/csrf$/)
+  })
+})
+
+it('uses the full 60-second window when Retry-After is unavailable, including CORS-hidden headers', async () => {
+  const { getPublicServices } = await import('./api')
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({}, 429)))
+  await expect(getPublicServices()).rejects.toMatchObject({ status: 429, retryAfterSeconds: 60 })
+})

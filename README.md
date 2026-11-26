@@ -4,7 +4,7 @@ React 19 + TypeScript + Vite 8. Nesta fase, a experiência pública e a gestão 
 
 ## Rotas e arquitetura
 
-- `/`: formulário público temporário com nome e telefone. A resposta é apenas `Solicitação recebida.`; não confirma criação de cliente nem agendamento.
+- `/`: agendamento público em cinco etapas, consumindo serviços e disponibilidade reais; confirmação somente após POST /api/bookings com resposta 201 válida. Consulte [o contrato e roteiro completo](docs/public-booking-flow.md).
 - `/admin`: verifica a sessão com `GET /api/admin/me`. Sem sessão válida, mostra login; com sessão administrativa, mostra uma tela inicial com logout.
 - Outros caminhos: página não encontrada, sem redirecionamento silencioso para a área pública.
 
@@ -15,8 +15,9 @@ src/
 ├── layouts/SiteLayout.tsx   # Marca, navegação e espaço das páginas
 ├── pages/                   # PublicPage, AdminPage e NotFoundPage
 ├── components/              # FormField, Feedback e componentes de UI existentes
-├── hooks/useAdminSession.ts # Verificação e estado visual da sessão
+├── hooks/                  # Sessão, fluxo público e contador de Retry-After
 ├── lib/api.ts               # Transporte, CSRF, erros e operações da API
+├── lib/booking.ts          # Tipos, datas locais e formatação
 └── test/setup.ts            # Limpeza do DOM e cookies nos testes
 ```
 
@@ -61,7 +62,7 @@ O módulo trata 401, 403 (incluindo `E_BAD_CSRF_TOKEN`), 419 e 429 com `Retry-Af
 
 A verificação inicial tem estado de carregamento. Falha de rede, CSRF ou servidor permite tentar novamente, sem presumir que a sessão acabou. O logout bem-sucedido volta ao formulário de login. Se a API já negar a sessão com 401/403 de autorização, a tela também volta ao login; se o logout falhar por CSRF, limite ou erro de servidor, a tela não afirma que a sessão terminou.
 
-Nenhum agendamento, catálogo de serviços, cadastro de profissionais ou alteração no modelo de autenticação foi implementado.
+O fluxo público usa GET /api/services, GET /api/availability e POST /api/bookings. Não faz cadastro de cliente separado nem exige login. O layout usa azul-marinho/dourado e controles responsivos. A área administrativa mantém sua sessão e login/logout, sem painel de reservas novo.
 
 ## Testar e validar
 
@@ -72,11 +73,11 @@ npm run build
 npm run preview -- --host localhost
 ```
 
-Os testes usam Vitest, jsdom e Testing Library, com `fetch` simulado; não exigem backend nem acessam seu banco. Cobrem URLs, links, voltar/avançar, entrada direta e remontagem de `/admin` com sessão válida, login/logout, falhas transitórias, erros HTTP, CSRF, credenciais e o formulário público com mensagem genérica. Não substituem um teste ponta a ponta com servidor real.
+Os testes usam Vitest, jsdom e Testing Library, com `fetch` simulado; não exigem backend nem acessam seu banco. Cobrem URLs, links, voltar/avançar, entrada direta e remontagem de `/admin` com sessão válida, login/logout, falhas transitórias, erros HTTP, CSRF, credenciais e o fluxo público completo, conflitos, prazos e resultado incerto sem retry de POST. Não substituem um teste ponta a ponta com servidor real.
 
 Roteiro manual com o backend existente:
 
-1. Abra `/`, envie nome e telefone e confira somente `Solicitação recebida.`.
+1. Em backend de teste autorizado, abra `/`, escolha serviço, data, slot e contato; revise e confirme uma única vez. Confira os dados reais da resposta 201. O roteiro completo, incluindo erros e ausência de idempotência, está em [docs/public-booking-flow.md](docs/public-booking-flow.md).
 2. Navegue para Gestão; sem sessão, deve aparecer login.
 3. Faça login com uma conta administrativa existente; deve aparecer a área administrativa.
 4. Atualize `/admin`, abra essa URL em outra aba e navegue entre Cliente e Gestão: uma sessão válida deve continuar ativa.
@@ -84,3 +85,7 @@ Roteiro manual com o backend existente:
 6. Confira voltar/avançar do navegador e uma URL inexistente.
 
 O aviso de Fast Refresh em `src/components/ui/button.tsx` já existia antes desta fase e não foi alterado.
+
+Nome e telefone ficam somente em memória; não são persistidos em storage pela aplicação. Uma resposta perdida após POST pode representar uma reserva criada: não há idempotência ou recuperação pública. A interface bloqueia reenvio no estado incerto e orienta contato com a barbearia.
+
+Limitação atual: o CORS do backend não expõe Retry-After em outra origem. O frontend aguarda conservadoramente 60 segundos quando o header não é legível; para o contador exato, usar proxy de mesma origem ou tratar a exposição do header em PR separada do backend.
