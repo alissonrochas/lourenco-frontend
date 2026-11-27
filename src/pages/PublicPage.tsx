@@ -4,12 +4,7 @@ import { Feedback } from '@/components/Feedback'
 import { BookingSummary } from '@/components/booking/BookingSummary'
 import { usePublicBooking } from '@/hooks/usePublicBooking'
 import { useRetryCountdown } from '@/hooks/useRetryCountdown'
-import {
-  formatDate,
-  formatPrice,
-  formatTime,
-  todayInSaoPaulo,
-} from '@/lib/booking'
+import { formatDate, formatPrice, formatTime } from '@/lib/booking'
 
 const steps = ['Serviço', 'Data', 'Horário', 'Seus dados', 'Revisão']
 export function PublicPage() {
@@ -167,13 +162,34 @@ export function PublicPage() {
                 id="booking-date"
                 label="Data do atendimento"
                 type="date"
-                min={todayInSaoPaulo()}
-                max="9999-12-31"
+                min={flow.policy?.minDate}
+                max={flow.policy?.maxDate}
+                disabled={!flow.policy || flow.policyLoading}
                 value={flow.date}
                 onChange={(event) => flow.chooseDate(event.target.value)}
                 required
                 aria-describedby="booking-timezone"
               />
+              {flow.policyLoading && (
+                <p role="status">Consultando os limites de datas…</p>
+              )}
+              {flow.policy && (
+                <p className="booking-note">
+                  Agendamentos de {formatDate(flow.policy.minDate)} a{' '}
+                  {formatDate(flow.policy.maxDate)}.
+                </p>
+              )}
+              <Feedback message={flow.policyError} error />
+              <button
+                type="button"
+                className="booking-text-button"
+                disabled={flow.policyLoading || slotsWait > 0}
+                onClick={() => void flow.refreshPolicy()}
+              >
+                {slotsWait
+                  ? `Aguarde ${slotsWait}s para atualizar limites`
+                  : 'Atualizar limites de datas'}
+              </button>
               <p id="booking-timezone" className="booking-note">
                 Datas e horários da barbearia em America/Sao_Paulo.
               </p>
@@ -289,17 +305,22 @@ export function PublicPage() {
             type="submit"
             disabled={
               flow.pending ||
-              (postWait > 0 && flow.step === 4) ||
+              ((postWait > 0 || slotsWait > 0 || flow.policyRejected) &&
+                flow.step === 4) ||
               (flow.step === 0 && (!flow.service || flow.servicesLoading)) ||
               (flow.step === 2 && (!flow.slot || flow.slotsLoading)) ||
-              (flow.step === 1 && slotsWait > 0)
+              (flow.step === 1 &&
+                (slotsWait > 0 ||
+                  !flow.policy ||
+                  flow.policyLoading ||
+                  flow.slotsLoading))
             }
           >
             {flow.pending
               ? 'Confirmando…'
               : flow.step === 4
-                ? postWait
-                  ? `Aguarde ${postWait}s para confirmar`
+                ? postWait || slotsWait
+                  ? `Aguarde ${postWait || slotsWait}s para confirmar`
                   : 'Confirmar agendamento'
                 : flow.step === 3
                   ? 'Revisar agendamento'

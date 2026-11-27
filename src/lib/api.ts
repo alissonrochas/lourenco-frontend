@@ -1,12 +1,13 @@
 import { validWeekly, validExceptions, type DayPatch, type ExceptionInput } from './adminSchedule'
 import { isAdminService, type ServiceInput } from './adminService'
 import { isAdminBooking, type BookingFilters, type AdminBookingList } from './adminBooking'
-import { BOOKING_TIMEZONE, isLocalDate, type PublicService, type Availability, type BookingInput, type BookingConfirmation } from './booking'
+import { readBookingPolicy, dateWithinPolicy, type BookingPolicy, BOOKING_TIMEZONE, isLocalDate, type PublicService, type Availability, type BookingInput, type BookingConfirmation } from './booking'
 
 const API_URL = import.meta.env.VITE_API_URL?.replace(/\/$/, '') ?? ''
 
 type ApiPayload = {
   code?: string
+  policy?: unknown
   message?: string
   errors?: Record<string, string[]> | Array<{ message: string }>
 }
@@ -30,6 +31,35 @@ export class ApiError extends Error {
     this.code = code
     this.retryAfterSeconds = retryAfterSeconds
   }
+}
+
+export class BookingDateOutOfRangeError extends ApiError {
+  readonly policy: BookingPolicy
+  constructor(policy: BookingPolicy) {
+    super('A data escolhida não está mais disponível para agendamento. Escolha outra data.', 422, 'BOOKING_DATE_OUT_OF_RANGE')
+    this.policy = policy
+  }
+}
+export const BOOKING_REFUSED_MESSAGE = 'Não foi possível concluir a reserva pelo site. Entre em contato com a barbearia.'
+export class PublicBookingNotAcceptedError extends ApiError {
+  constructor() { super(BOOKING_REFUSED_MESSAGE, 422, 'PUBLIC_BOOKING_NOT_ACCEPTED') }
+}
+function publicBookingError(response: Response, payload: ApiPayload, date: string, fallback: string) {
+  const validMessage = typeof payload.message === 'string' && payload.message.trim().length > 0
+  if (payload.code === 'BOOKING_DATE_OUT_OF_RANGE' && response.status === 422) {
+    const policy = readBookingPolicy(payload.policy)
+    if (validMessage && policy && !dateWithinPolicy(date, policy)) return new BookingDateOutOfRangeError(policy)
+    return new ApiError('Não foi possível validar os limites de datas. Atualize os limites antes de continuar.', 422, 'INVALID_BOOKING_POLICY')
+  }
+  if (payload.code === 'PUBLIC_BOOKING_NOT_ACCEPTED' && response.status === 422) {
+    if (validMessage) return new PublicBookingNotAcceptedError()
+    return new ApiError('Resposta de reserva inválida. Atualize a página antes de tentar novamente.', 422, 'INVALID_BOOKING_RESPONSE')
+  }
+  // Public reads/writes never trust arbitrary JSON types as codes or messages.
+  return apiError(response, {
+    code: typeof payload.code === 'string' ? payload.code : undefined,
+    message: typeof payload.message === 'string' ? payload.message : undefined,
+  }, fallback)
 }
 
 export function isSessionDenied(error: unknown) {
@@ -194,15 +224,15 @@ export async function getPublicAvailability(
   date: string,
   signal?: AbortSignal,
 ) {
-  const payload = await requestJson<{ data: Availability }>(
-    `/api/availability?date=${encodeURIComponent(date)}`,
-    'Não foi possível consultar os horários.',
-    { signal },
-  )
-  const data = payload.data
+  const response = await apiFetch(`/api/availability?date=${encodeURIComponent(date)}`, { signal, cache: 'no-store' })
+  const payload = await readPayload(response)
+  if (!response.ok) throw publicBookingError(response, payload, date, 'Não foi possível consultar os horários.')
+  const data = (payload as { data?: Availability }).data
+  const policy = readBookingPolicy(data?.policy)
   if (
     !data ||
     data.localDate !== date ||
+    !policy || !dateWithinPolicy(date, policy) ||
     data.timezone !== BOOKING_TIMEZONE ||
     data.slotDurationMinutes !== 60 ||
     !Array.isArray(data.slots) ||
@@ -229,7 +259,12 @@ export async function getPublicAvailability(
     throw new Error(
       'Resposta de horários inválida. Atualize a disponibilidade.',
     )
-  return data
+  return { localDate: data.localDate, weekday: data.weekday, timezone: data.timezone,
+    slotDurationMinutes: data.slotDurationMinutes, policy: policy!, slots: data.slots.map(slot => ({
+      startsAtMinute: slot.startsAtMinute, endsAtMinute: slot.endsAtMinute, startsAtLocal: slot.startsAtLocal,
+      endsAtLocal: slot.endsAtLocal, startsAtUtc: slot.startsAtUtc, endsAtUtc: slot.endsAtUtc,
+      startOffsetMinutes: slot.startOffsetMinutes, endOffsetMinutes: slot.endOffsetMinutes,
+    })) }
 }
 export class BookingOutcomeUnknownError extends Error {
   constructor() {
@@ -267,7 +302,7 @@ export async function createPublicBooking(
     )
     const payload = await readPayload(response)
     if (!response.ok)
-      throw apiError(response, payload, 'Não foi possível confirmar a reserva.')
+      throw publicBookingError(response, payload, input.localDate, 'Não foi possível confirmar a reserva.')
     const data = (payload as ApiPayload & { data?: BookingConfirmation }).data
     if (
       response.status !== 201 ||

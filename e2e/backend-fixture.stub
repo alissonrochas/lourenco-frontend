@@ -142,7 +142,8 @@ export default class RealE2eFixture extends BaseCommand {
             localDate,
             startsAtMinute: slot.startsAtMinute,
             name: 'Cliente Paginação E2E',
-            phone: '71970000000',
+            // Deterministic distinct contacts; preserve the first expected identity.
+            phone: String(71970000000 + created),
           })
           created++
         }
