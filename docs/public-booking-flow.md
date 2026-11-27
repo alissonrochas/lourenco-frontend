@@ -12,9 +12,9 @@ A rota `/` consome o backend Adonis existente sem criar conta de cliente. O form
 
 `GET /api/services` retorna `{ data: PublicService[] }`, com id, name, description nullable, priceCents, durationMinutes, isActive e timestamps. São apresentados somente os ativos; o catálogo pode ficar vazio ou falhar, com atualização manual. A duração do catálogo não determina a duração da reserva: o bloco do MVP tem 60 minutos.
 
-`GET /api/availability?date=YYYY-MM-DD` retorna `{ data: { localDate, weekday, timezone, slotDurationMinutes, slots } }`. Cada slot contém startsAtMinute, endsAtMinute, horários locais de parede, instantes ISO UTC e offsets. O frontend mostra os minutos retornados e não gera uma grade própria. Datas são strings locais canônicas; a seleção nunca é convertida com new Date('YYYY-MM-DD').toISOString(). O mínimo do seletor usa a data atual em America/Sao_Paulo, independentemente do fuso do dispositivo; o backend permanece a autoridade final.
+`GET /api/availability?date=YYYY-MM-DD` retorna `{ data: { localDate, weekday, timezone, slotDurationMinutes, policy, slots } }`. Cada slot contém startsAtMinute, endsAtMinute, horários locais de parede, instantes ISO UTC e offsets. O frontend mostra os minutos retornados e não gera uma grade própria. Datas são strings locais canônicas; a seleção nunca é convertida com new Date('YYYY-MM-DD').toISOString(). O mínimo e máximo do seletor vêm exclusivamente de `data.policy = { minDate, maxDate, timezone }`, validado pelo cliente; não há cálculo independente de horizonte de 30 dias. O backend permanece a autoridade final, inclusive quando o relógio do dispositivo está incorreto.
 
-Mudanças de serviço/data invalidam a seleção de horário. Cada consulta tem AbortController e verificação da geração/data atual: resposta antiga não substitui a nova, mesmo que o transporte simulado ignore abort. Não há polling nem retry automático. Voltar às etapas mantém os dados enquanto a página estiver montada; a retomada da etapa de horários consulta novamente a disponibilidade.
+Mudanças de serviço/data invalidam a seleção de horário. Cada consulta tem AbortController e verificação da geração/data atual: resposta antiga não substitui a nova, mesmo que o transporte simulado ignore abort. Não há polling regular da API nem retry automático de POST. Uma checagem local por minuto e eventos de foco/visibilidade consultam novamente os limites quando muda a data estimada em São Paulo; o mesmo prazo de Retry-After é respeitado. Voltar às etapas mantém os dados enquanto a página estiver montada; a retomada da etapa de horários consulta novamente a disponibilidade.
 
 O POST é enviado diretamente para `/api/bookings`, sem cadastro separado em `/api/customers`:
 
@@ -47,13 +47,15 @@ Para exibir o prazo exato retornado pelo servidor, usar um proxy `/api` na mesma
 ## Erros e resultado incerto
 
 - 409: invalidar o slot e pedir atualização manual dos horários. Preserva serviço, data e contato; não reapresenta o slot antigo como selecionado.
-- 422: voltar à seleção de serviço e pedir revisão/atualização. Preserva contato e invalida o horário.
-- 429: respeitar Retry-After em segundos ou HTTP-date; sem valor válido, aguardar 60 segundos. Catálogo, disponibilidade e confirmação têm prazos separados, coerentes com os orçamentos independentes do backend. O botão correspondente fica desabilitado e a função também verifica o prazo. O fim do contador não dispara requisição.
+- 422 `BOOKING_DATE_OUT_OF_RANGE`: validar `policy` do erro e sua consistência com a data recusada, atualizar limites, invalidar horário e voltar à escolha de data. Preserva serviço, nome, telefone e valor da data para correção.
+- 422 `PUBLIC_BOOKING_NOT_ACCEPTED`: recusa definitiva daquela tentativa, mantendo revisão e dados. Exibe orientação genérica de contato com a barbearia; não utiliza detalhes extras/mensagem arbitrária do JSON, não revela quantidade ou reservas de terceiros e não afirma erro no telefone. A confirmação fica bloqueada para a mesma tentativa até edição explícita dos dados, sem reenvio automático e sem resultado incerto.
+- Outros 422 de dados/serviço mantêm o tratamento anterior. Erro de política malformado nunca atualiza limites; a interface pede atualização em vez de confiar no JSON.
+- 429: respeitar Retry-After em segundos ou HTTP-date; sem valor válido, aguardar 60 segundos. Catálogo, disponibilidade e confirmação têm prazos separados, coerentes com os orçamentos independentes do backend. O botão correspondente fica desabilitado e a função também verifica o prazo. O contador por si só não dispara requisição; a revalidação de virada de dia também respeita o prazo.
 - 503: mensagem de indisponibilidade temporária, permitindo nova tentativa manual.
 - 403/419 de CSRF: manter o tratamento existente e orientar atualização da página; não reenviar o POST automaticamente.
 - Erro de rede/abort/timeout após despacho, resposta de sucesso inválida ou 500 inesperado: exibir resultado incerto e bloquear novo POST nesta instância do fluxo.
 
-A confirmação tem sinal de timeout de 20 segundos. A preparação CSRF compartilhada mantém o ciclo original e não é abortada globalmente para outros consumidores. A navegação/desmontagem aborta a operação local e ignora atualizações tardias; isso **não garante rollback no servidor**.
+Antes de cada confirmação há uma leitura nova da disponibilidade, limitada a 20 segundos, validando a janela e o slot ainda existente. Falha/timeout nessa leitura não envia POST e não é resultado desconhecido. O POST mantém seu timeout próprio de 20 segundos. A janela entre leitura e gravação continua sujeita a concorrência; a API decide o resultado final. A preparação CSRF compartilhada mantém o ciclo original e não é abortada globalmente para outros consumidores. A navegação/desmontagem aborta a operação local e ignora atualizações tardias; isso **não garante rollback no servidor**.
 
 **Não há idempotência no backend.** Se a conexão cair após o envio, a reserva pode ter sido criada sem a resposta chegar. A interface não afirma sucesso nem falha, não repete automaticamente e orienta contato com a barbearia pelo canal já conhecido, sem inventar número. Sair/recarregar perde o estado local e pode esconder essa incerteza: o cliente deve verificar com a barbearia antes de enviar novamente. Não há recuperação pública por telefone/ID nem token de cancelamento nesta etapa.
 
@@ -64,13 +66,14 @@ Um ref bloqueia submissões simultâneas antes da próxima renderização; botõ
 ```bash
 npm test
 npm run lint
+npm run typecheck
 npm run build
 npm run dev -- --host localhost
 ```
 
 Vitest/Testing Library usam fetch simulado conforme os transformers reais: cobrem catálogo, seleção, datas/passado, respostas antigas, contato, revisão, payload, CSRF/cookies, 201, submissão duplicada, erros, prazos e incerteza. As regressões de `/admin`, sessão direta, login/logout e 404 permanecem. A UI usa rádios nativos, labels, fieldsets/legends, aria-current e alert/status, foco de etapas, alvos de toque e layouts para mobile/desktop. Não há auditoria formal com leitor de tela nesta PR.
 
-A checagem interativa em Chrome headless utiliza interceptação local das APIs em desktop (1440×1000) e mobile (390×844), incluindo seleção, revisão, confirmação, acesso a `/admin`, ausência de rolagem horizontal e POST único. Essas respostas são simuladas; não se afirma integração ponta a ponta com banco real. Não foram feitas chamadas ao backend de desenvolvimento que possam persistir sessão ou reserva.
+A checagem interativa em Chrome headless utiliza interceptação local das APIs em desktop (1440×1000) e mobile (390×844), incluindo seleção, revisão, confirmação, acesso a `/admin`, ausência de rolagem horizontal e POST único. Essa checagem visual histórica utilizou respostas simuladas e não constitui prova de integração. A integração real desta etapa é coberta separadamente pela suíte E2E com o backend da PR #18 e SQLite descartável, descrita abaixo. Não foram feitas chamadas ao backend de desenvolvimento que possam persistir sessão ou reserva.
 
 Roteiro com backend real, **em ambiente de testes autorizado**:
 
@@ -84,3 +87,23 @@ Roteiro com backend real, **em ambiente de testes autorizado**:
 8. Repetir em mobile, com teclado, foco, zoom e nomes/descrições longos.
 
 O roteiro de confirmação cria reservas no ambiente escolhido. Não executá-lo contra o banco de desenvolvimento/produção sem autorização. Não há mudanças no backend, migrations, gestão administrativa de reservas, cancelamento público, pagamentos, notificações, múltiplos profissionais ou laboratório 3D nesta etapa.
+
+## Integração R04 — Etapa 10.2B
+
+Esta versão depende dos contratos da [PR #18 do backend](https://github.com/alissonrochas/lourenco-backend/pull/18), commit `f823e60e745ba36932eea4eced5b5ce9032601ff`, ainda aberta na implementação desta etapa. Não se presume que a main do backend tenha esses campos. Sem política válida, o seletor e o avanço da etapa de data ficam bloqueados e há atualização manual; não se inventa um horizonte alternativo.
+
+A descoberta ocorre ao entrar na escolha de data, com um GET de disponibilidade para a data estimada em `America/Sao_Paulo`. Essa data é somente uma tentativa: um 422 de horizonte válido também fornece os limites autoritativos. A política é mantida em memória durante o fluxo e reutilizada ao voltar entre etapas, evitando consultas repetidas por renderização. Há opção de atualizar limites manualmente. Consultas atrasadas/abortadas não substituem dados de uma seleção mais nova; uma sequência de leituras impede regressão dos limites por resposta antiga.
+
+São validados formato/calendário real das datas, minDate <= maxDate, fuso exato e inclusão da data consultada na política de uma resposta 200. Um erro de horizonte deve excluir a data recusada e conter limites válidos; objetos malformados não são adotados. Apenas campos públicos permitidos são retidos. O cliente não valida o tamanho da janela contra um número fixo, pois a configuração pertence ao servidor.
+
+A checagem local de dia não soma dias nem transforma uma política antiga em nova. Ao detectar mudança de dia, consulta o servidor e, se a seleção perdeu validade, volta à data preservando contato/serviço. Se o dispositivo estiver com hora incorreta, a leitura obrigatória anterior ao POST ainda detecta a mudança real no servidor. Sem relógio confiável/timestamp de servidor, não há promessa de atualização visual instantânea exatamente à meia-noite; o backend revalida todas as escritas. Leituras normais não são feitas a cada minuto: é uma checagem local, com nova consulta somente na mudança de dia. Uma descoberta por entrada de fluxo, uma consulta da data selecionada e uma leitura antes do POST são o caminho usual, sem repetição de escrita.
+
+A fixture versionada `e2e/backend-fixture.stub` usa `String(71970000000 + created)` na paginação: preserva 51 reservas, primeira identidade esperada e todas as asserções, sem exceder a cota de um contato ou criar exceção no backend. Os cenários A/B agora também verificam restrição de datas e terceira reserva recusada com mensagem genérica. O cenário E6 coordena os dois POSTs após as leituras reais anteriores, mantendo dois envios concorrentes ao SQLite e todas as asserções: sem essa coordenação, a nova leitura pode corretamente evitar o segundo POST e o teste antigo ficava esperando uma resposta inexistente. Não foram aumentados timeouts nem reduzidas asserções. O cenário de rate limiting conta a descoberta inicial mais 59 consultas para esgotar o orçamento existente de 60, preservando suas verificações de 429/Retry-After/CORS. A suíte mantém 44 execuções desktop/mobile.
+
+Testes frontend: 253 aprovados, incluindo 37 novos casos de política/fluxo; lint aprovado com somente o aviso preexistente de Fast Refresh em button.tsx, typecheck e build aprovados. Os testes de UI incluem relógio incorreto, atualizações do servidor, viradas de calendário/meia-noite, respostas antigas, preservação de dados, timeout de leitura e recusa definitiva. Os testes anteriores de 201/409/429/503, CSRF, resultado incerto, rotas e autenticação permanecem.
+
+Para integração real, com o backend da PR #18 na pasta irmã (ou `E2E_BACKEND_PATH` correspondente), executar `TMPDIR=/dev/shm E2E_BROWSER_CHANNEL=chrome npm run test:e2e` em Linux, se tmpfs estiver disponível. O harness existente cria suas próprias cópias e bancos e não carrega `.env` original. Nenhum patch temporário de fixture é necessário: a correção faz parte desta PR. Relatórios ficam ignorados no Git. Resultados são execuções locais relatadas pelo Codex, não checks independentes de CI.
+
+As limitações de posse não verificada do telefone, inferência indireta por recusa e ausência de idempotência pública continuam. Recarregar a página perde os dados e eventual estado incerto; não foi acrescentada recuperação por telefone. Esta etapa não declara prontidão para produção, não muda o backend e não realiza merge/deploy.
+
+Resultado final da suíte versionada: **44 E2E reais aprovados (22 desktop e 22 mobile)** com o backend da PR #18 em `f823e60e745ba36932eea4eced5b5ce9032601ff`. O harness confirmou preservação de arquivos originais e remoção de processos/bancos descartáveis. Não foram usados patches externos à PR para esse resultado.

@@ -111,3 +111,10 @@ Veja [docs/admin-service-management.md](docs/admin-service-management.md) para c
 Em `/admin`, escolha **Horários** para editar o funcionamento semanal, intervalos, bloqueios semanais e exceções por data. Toda escrita exige confirmação, CSRF e revisão ETag/If-Match. Reservas confirmadas conflitantes impedem a alteração inteira; nenhuma reserva é modificada automaticamente.
 
 Esta seção depende da [PR #15 do backend](https://github.com/alissonrochas/lourenco-backend/pull/15). Leia [docs/admin-schedule-management.md](docs/admin-schedule-management.md) para contratos, precedência de fechamentos, blocos de 60 minutos, revisões concorrentes, recuperação de falhas e testes reais.
+
+
+## Política pública de reservas — R04
+
+O agendamento público consome `data.policy` e os novos erros 422 da [PR #18 do backend](https://github.com/alissonrochas/lourenco-backend/pull/18), ainda dependência desta etapa. Os limites de data são descobertos ao entrar no calendário; a data do dispositivo é só uma tentativa inicial, corrigida pelos limites públicos do servidor. A interface valida a janela antes das consultas e revalida disponibilidade antes de cada POST, preservando dados ao corrigir datas ou receber recusa genérica da política. Não calcula uma janela própria nem armazena dados pessoais em storage.
+
+A fixture E2E de paginação foi corrigida no repositório para 51 contatos sintéticos determinísticos, preservando a primeira identidade e todas as asserções. Execute `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` e `E2E_BROWSER_CHANNEL=chrome npm run test:e2e` com a versão compatível do backend. Leia [docs/public-booking-flow.md](docs/public-booking-flow.md) para descoberta/atualização da política, erros, preservação, integração real e limitações. Não há declaração de prontidão para produção.

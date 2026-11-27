@@ -19,11 +19,26 @@ export type AvailabilitySlot = {
   startOffsetMinutes: number
   endOffsetMinutes: number
 }
+export type BookingPolicy = {
+  minDate: string
+  maxDate: string
+  timezone: typeof BOOKING_TIMEZONE
+}
+export function readBookingPolicy(value: unknown): BookingPolicy | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const p = value as Record<string, unknown>
+  if (!isLocalDate(p.minDate) || !isLocalDate(p.maxDate) || p.minDate > p.maxDate || p.timezone !== BOOKING_TIMEZONE) return null
+  return { minDate: p.minDate, maxDate: p.maxDate, timezone: BOOKING_TIMEZONE }
+}
+export function dateWithinPolicy(date: string, policy: BookingPolicy) {
+  return isLocalDate(date) && date >= policy.minDate && date <= policy.maxDate
+}
 export type Availability = {
   localDate: string
   weekday: number
   timezone: typeof BOOKING_TIMEZONE
   slotDurationMinutes: 60
+  policy: BookingPolicy
   slots: AvailabilitySlot[]
 }
 export type BookingInput = {
@@ -56,7 +71,8 @@ export function todayInSaoPaulo() {
     parts.find((part) => part.type === type)!.value
   return `${value('year')}-${value('month')}-${value('day')}`
 }
-export function isLocalDate(value: string) {
+export function isLocalDate(value: unknown): value is string {
+  if (typeof value !== 'string') return false
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
   const [year, month, day] = value.split('-').map(Number)
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)

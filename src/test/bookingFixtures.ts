@@ -5,6 +5,7 @@ import type {
   PublicService,
 } from '@/lib/booking'
 export const date = '2099-12-28'
+export const policy = { minDate: '2099-12-01', maxDate: '2099-12-31', timezone: 'America/Sao_Paulo' as const }
 export const service: PublicService = {
   id: 7,
   name: 'Corte clássico',
@@ -36,6 +37,7 @@ export function availability(
     weekday: 1,
     timezone: 'America/Sao_Paulo',
     slotDurationMinutes: 60,
+    policy,
     slots: starts.map((minute) => ({
       startsAtMinute: minute,
       endsAtMinute: minute + 60,

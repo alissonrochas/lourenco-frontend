@@ -2,10 +2,12 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import App from '@/App'
+import { dateWithinPolicy } from '@/lib/booking'
 import {
   availability,
   confirmation,
   date,
+  policy,
   deferred,
   json,
   service,
@@ -22,8 +24,11 @@ function mockApi(
     const custom = handler?.(url, init)
     if (custom) return custom
     if (url.pathname === '/api/services') return json({ data: [service] })
-    if (url.pathname === '/api/availability')
-      return json({ data: availability(url.searchParams.get('date')!) })
+    if (url.pathname === '/api/availability') {
+      const selected = url.searchParams.get('date')!
+      return dateWithinPolicy(selected, policy) ? json({ data: availability(selected) })
+        : json({ code: 'BOOKING_DATE_OUT_OF_RANGE', message: 'Escolha outra data.', policy }, 422)
+    }
     if (url.pathname === '/api/csrf') {
       document.cookie = 'XSRF-TOKEN=fresh; path=/'
       return json({ ok: true })
@@ -47,6 +52,7 @@ const continueStep = () =>
 async function chooseDate(value = date) {
   fireEvent.click(await screen.findByRole('radio', { name: /Corte clássico/ }))
   continueStep()
+  await waitFor(() => expect((screen.getByLabelText('Data do atendimento') as HTMLInputElement).disabled).toBe(false))
   fireEvent.change(screen.getByLabelText('Data do atendimento'), {
     target: { value },
   })
@@ -125,7 +131,7 @@ it.each(['empty', 'error'])(
 it('uses the chosen local date in GET and renders only returned slots, including an empty day', async () => {
   let empty = false
   const mock = mockApi((url) =>
-    url.pathname === '/api/availability'
+    url.pathname === '/api/availability' && url.searchParams.get('date') === date
       ? json({ data: availability(date, empty ? [] : [660]) })
       : undefined,
   )
@@ -149,6 +155,7 @@ it('rejects a past local date even if native browser validation is bypassed', as
   fireEvent.click(await screen.findByRole('radio', { name: /Corte clássico/ }))
   continueStep()
   const dateInput = screen.getByLabelText('Data do atendimento')
+  await waitFor(() => expect((dateInput as HTMLInputElement).disabled).toBe(false))
   expect(dateInput.getAttribute('min')).toMatch(/^\d{4}-\d{2}-\d{2}$/)
   fireEvent.change(dateInput, { target: { value: '2000-01-01' } })
   fireEvent.submit(screen.getByRole('form', { name: 'Agendamento público' }))
@@ -156,7 +163,7 @@ it('rejects a past local date even if native browser validation is bypassed', as
     'data válida',
   )
   expect(
-    mock.mock.calls.some(([url]) => url.includes('/api/availability')),
+    mock.mock.calls.some(([url]) => url.includes('/api/availability?date=2000-01-01')),
   ).toBe(false)
 })
 
@@ -273,7 +280,7 @@ it('409 invalidates the slot, preserves contact, and refreshes availability only
   expect(screen.queryByRole('radio', { name: '09:00' })).toBeNull()
   expect(
     mock.mock.calls.filter(([url]) => url.includes('/api/availability')).length,
-  ).toBe(1)
+  ).toBe(3) // Initial policy discovery, selected date, and read before POST.
   fireEvent.click(screen.getByRole('button', { name: 'Atualizar horários' }))
   fireEvent.click(await screen.findByRole('radio', { name: '10:00' }))
   continueStep()
@@ -354,13 +361,16 @@ it.each(['services', 'availability'])(
         : undefined,
     )
     open()
-    if (resource === 'availability') await chooseDate()
+    if (resource === 'availability') {
+      fireEvent.click(await screen.findByRole('radio', { name: /Corte clássico/ }))
+      continueStep()
+    }
     await screen.findByRole('alert')
     const button = await screen.findByRole('button', {
       name:
         resource === 'services'
           ? /Aguarde 15s para atualizar serviços/
-          : /Aguarde 15s para atualizar horários/,
+          : /Aguarde 15s para atualizar limites/,
     })
     expect((button as HTMLButtonElement).disabled).toBe(true)
   },

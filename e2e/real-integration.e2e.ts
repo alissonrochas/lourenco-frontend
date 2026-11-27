@@ -42,23 +42,42 @@ const test = base.extend<{ integration: FixtureInfo; mode: string }>({
     { auto: true },
   ],
 })
-async function prepareBooking(page: Page, info: FixtureInfo, name = 'Cliente E2E') {
+async function prepareBooking(page: Page, info: FixtureInfo, name = 'Cliente E2E', time = '09:00', checkBounds = false) {
   await page.goto('/')
   await page.getByRole('radio', { name: /Corte E2E/ }).check()
   await page.getByRole('button', { name: 'Continuar', exact: true }).click()
-  await page.getByLabel('Data do atendimento').fill(info.date)
+  const dateInput = page.getByLabel('Data do atendimento')
+  await expect(dateInput).toBeEnabled()
+  await expect(dateInput).toHaveAttribute('min', /^\d{4}-\d{2}-\d{2}$/)
+  await expect(dateInput).toHaveAttribute('max', /^\d{4}-\d{2}-\d{2}$/)
+  if (checkBounds) {
+    const min = (await dateInput.getAttribute('min'))!, max = (await dateInput.getAttribute('max'))!
+    const neighbor = (value: string, days: number) => {
+      const calendar = new Date(`${value}T12:00:00Z`)
+      calendar.setUTCDate(calendar.getUTCDate() + days)
+      return calendar.toISOString().slice(0, 10)
+    }
+    for (const invalid of [neighbor(min, -1), neighbor(max, 1)]) {
+      await dateInput.fill(invalid)
+      // Bypass native validity to exercise the hook's policy validation as well.
+      await page.getByRole('form', { name: 'Agendamento público' }).evaluate(form => form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+      await expect(page.getByRole('alert')).toContainText('data válida')
+      await expect(dateInput).toBeVisible()
+    }
+  }
+  await dateInput.fill(info.date)
   await page.getByRole('button', { name: 'Continuar', exact: true }).click()
   await expect(page.getByRole('radio', { name: '10:00', exact: true })).toHaveCount(0)
   await expect(page.getByRole('radio', { name: '12:00', exact: true })).toHaveCount(0)
   await expect(page.getByRole('radio', { name: '15:00', exact: true })).toHaveCount(0)
-  await page.getByRole('radio', { name: '09:00', exact: true }).check()
+  await page.getByRole('radio', { name: time, exact: true }).check()
   await page.getByRole('button', { name: 'Continuar', exact: true }).click()
   await page.getByLabel('Nome completo').fill(name)
   await page.getByLabel('Telefone', { exact: true }).fill('71999999999')
   await page.getByRole('button', { name: 'Revisar agendamento' }).click()
 }
-async function book(page: Page, info: FixtureInfo) {
-  await prepareBooking(page, info)
+async function book(page: Page, info: FixtureInfo, checkBounds = false) {
+  await prepareBooking(page, info, 'Cliente E2E', '09:00', checkBounds)
   const response = page.waitForResponse(
     (r) => r.url() === `${env.backendURL}/api/bookings` && r.request().method() === 'POST',
   )
@@ -112,7 +131,7 @@ test('A — browser public booking, real calendar, HTTP 201 and SQLite persisten
   context,
   integration,
 }) => {
-  const persisted = await book(page, integration)
+  const persisted = await book(page, integration, true)
   expect(persisted.local_date).toBe(integration.date)
   expect(persisted.starts_at_minute).toBe(540)
   expect(Number(persisted.ends_at_utc) - Number(persisted.starts_at_utc)).toBe(3600000)
@@ -152,6 +171,23 @@ test('B — HTTP duplicate rejection against SQLite after a browser confirmation
   expect(duplicate.status()).toBe(409)
   expect(rows("SELECT COUNT(*) AS count FROM bookings WHERE status = 'confirmed'")[0].count).toBe(1)
   expect(rows('SELECT COUNT(*) AS count FROM customers')[0].count).toBe(1)
+  const second = await post(context, '/api/bookings', {
+    serviceId: integration.serviceId, localDate: integration.date, startsAtMinute: 660,
+    name: 'Cliente E2E', phone: '71999999999',
+  })
+  expect(second.status()).toBe(201)
+  await prepareBooking(page, integration, 'Cliente E2E', '13:00')
+  const refusal = page.waitForResponse(r => r.url() === `${env.backendURL}/api/bookings` && r.request().method() === 'POST')
+  await page.getByRole('button', { name: 'Confirmar agendamento' }).click()
+  const rejected = await refusal
+  expect(rejected.status()).toBe(422)
+  expect(await rejected.json()).toEqual({ code: 'PUBLIC_BOOKING_NOT_ACCEPTED', message: 'Não foi possível concluir a reserva pelo site. Entre em contato com a barbearia.' })
+  await expect(page.getByRole('alert')).toContainText('Entre em contato com a barbearia')
+  await expect(page.getByText('Cliente E2E', { exact: true })).toBeVisible()
+  await expect(page.getByText('71999999999', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Confirmar agendamento' })).toBeDisabled()
+  await expect(page.getByRole('heading', { name: 'Confirmação não recebida' })).toHaveCount(0)
+  expect(rows("SELECT COUNT(*) AS count FROM bookings WHERE status = 'confirmed'")[0].count).toBe(2)
 })
 
 test.describe('C — seeded pagination with real creation service', () => {
@@ -328,6 +364,19 @@ test('E6 — two real browser contexts race for one SQLite slot', async ({
     const other = await second.newPage()
     await prepareBooking(page, integration, 'Concorrente A E2E')
     await prepareBooking(other, integration, 'Concorrente B E2E')
+    // Both real preflight reads must finish before either real write is released.
+    // Otherwise the second browser may correctly avoid POST after seeing occupancy.
+    let queued = 0
+    let release!: () => void
+    const bothReady = new Promise<void>(resolve => { release = resolve })
+    const rendezvous = async (route: import('@playwright/test').Route) => {
+      queued++
+      if (queued === 2) release()
+      await bothReady
+      await route.continue()
+    }
+    await page.route(`${env.backendURL}/api/bookings`, rendezvous)
+    await other.route(`${env.backendURL}/api/bookings`, rendezvous)
     const firstResponse = page.waitForResponse(
       (r) => r.url().endsWith('/api/bookings') && r.request().method() === 'POST',
     )
@@ -379,10 +428,12 @@ test('E8 — real rate limiting and browser CORS visibility of Retry-After', asy
 }) => {
   await page.goto('/')
   await page.getByRole('radio', { name: /Corte E2E/ }).check()
+  await page.getByRole('button', { name: 'Continuar', exact: true }).click()
+  await expect(page.getByLabel('Data do atendimento')).toBeEnabled()
   const statuses = await page.evaluate(
     async ({ api, date }) => {
       const result: number[] = []
-      for (let count = 0; count < 60; count++)
+      for (let count = 0; count < 59; count++)
         result.push(
           (await fetch(`${api}/api/availability?date=${date}`, { credentials: 'include' })).status,
         )
@@ -391,7 +442,7 @@ test('E8 — real rate limiting and browser CORS visibility of Retry-After', asy
     { api: env.backendURL, date: integration.date },
   )
   expect(statuses.every((status) => status === 200)).toBe(true)
-  await page.getByRole('button', { name: 'Continuar', exact: true }).click()
+  // One discovery + 59 reads exhaust the unchanged 60/IP/minute budget.
   await page.getByLabel('Data do atendimento').fill(integration.date)
   await page.getByRole('button', { name: 'Continuar', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Muitas tentativas')
